@@ -1,0 +1,2923 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#18181b">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Flussi Casa">
+<link rel="apple-touch-icon" href="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20100%20100%27%3E%3Crect%20width%3D%27100%27%20height%3D%27100%27%20rx%3D%2722%27%20fill%3D%27%2318181b%27%2F%3E%3Cpath%20d%3D%27M50%2018%20L82%2044%20L82%2084%20L60%2084%20L60%2060%20L40%2060%20L40%2084%20L18%2084%20L18%2044%20Z%27%20fill%3D%27%23ffffff%27%2F%3E%3C%2Fsvg%3E">
+<title>Gestione dei Flussi di Casa</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: { fontFamily: { sans: ['Inter','ui-sans-serif','system-ui','sans-serif'] } } } };
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom": "https://esm.sh/react-dom@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.462.0?external=react,react-dom"
+  }
+}
+</script>
+<style>
+  html, body { background:#fafafa; font-family:'Inter',ui-sans-serif,system-ui,sans-serif; }
+  * { box-sizing: border-box; }
+  ::-webkit-scrollbar { width:9px; height:9px; }
+  ::-webkit-scrollbar-thumb { background:#d4d4d8; border-radius:8px; }
+  ::-webkit-scrollbar-thumb:hover { background:#a1a1aa; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  .no-select { user-select:none; -webkit-user-select:none; }
+  input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+  @keyframes toastIn { from { opacity:0; transform:translateY(8px);} to { opacity:1; transform:translateY(0);} }
+  .toast-anim { animation: toastIn .2s ease-out; }
+  @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+  .fade-in { animation: fadeIn .15s ease-out; }
+</style>
+</head>
+<body class="bg-neutral-50 text-neutral-900">
+<div id="root"></div>
+<script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+<script type="text/babel" data-type="module" data-presets="react">
+import React, { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
+import ReactDOM from 'react-dom/client';
+import * as Icons from 'lucide-react';
+
+/* ============================== UTILS ============================== */
+
+const MESI = ['Gennaio','Febbraio','Marzo','Aprile','Maggio','Giugno','Luglio','Agosto','Settembre','Ottobre','Novembre','Dicembre'];
+const ANNI = [2024,2025,2026,2027];
+
+function fmtEUR(n) {
+  const v = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat('it-IT', { style:'currency', currency:'EUR', maximumFractionDigits:2 }).format(v);
+}
+function fmtPct(n) {
+  const v = Number.isFinite(n) ? n : 0;
+  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+}
+function fmtNum(n, d=2) {
+  const v = Number.isFinite(n) ? n : 0;
+  return new Intl.NumberFormat('it-IT', { minimumFractionDigits:d, maximumFractionDigits:d }).format(v);
+}
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
+
+const PWA_ICON_SVG = 'data:image/svg+xml;utf8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">' +
+  '<rect width="100" height="100" rx="22" fill="#18181b"/>' +
+  '<path d="M50 18 L82 44 L82 84 L60 84 L60 60 L40 60 L40 84 L18 84 L18 44 Z" fill="#ffffff"/>' +
+  '</svg>'
+);
+
+function parseImporto(raw) {
+  if (typeof raw === 'number') return raw;
+  if (raw === null || raw === undefined) return null;
+  let s = String(raw).trim().replace(/[€\s]/g,'');
+  if (!s) return null;
+  const neg = /^-/.test(s) || /^\(.*\)$/.test(s);
+  s = s.replace(/[()\-+]/g,'');
+  if (!/\d/.test(s)) return null;
+  if (s.includes(',') && s.includes('.')) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g,'').replace(',', '.');
+    else s = s.replace(/,/g,'');
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.');
+  }
+  const n = parseFloat(s);
+  if (Number.isNaN(n)) return null;
+  return neg ? -Math.abs(n) : n;
+}
+function parseData(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  let m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return null;
+}
+function isExcelSerialDate(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 20000 && n < 60000;
+}
+function excelSerialToISO(serial) {
+  const n = Number(serial);
+  if (!Number.isFinite(n)) return null;
+  const ms = Math.round((n - 25569) * 86400 * 1000);
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return null;
+  const y = d.getUTCFullYear(), mo = String(d.getUTCMonth()+1).padStart(2,'0'), da = String(d.getUTCDate()).padStart(2,'0');
+  return `${y}-${mo}-${da}`;
+}
+function anyDateLikeToISO(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return isExcelSerialDate(v) ? excelSerialToISO(v) : null;
+  const s = String(v).trim();
+  if (!s || s === '-') return null;
+  if (/^\d+(\.\d+)?$/.test(s)) return isExcelSerialDate(Number(s)) ? excelSerialToISO(Number(s)) : null;
+  return parseData(s);
+}
+function isinLike(s) {
+  return /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(String(s || '').trim().toUpperCase());
+}
+function inPeriod(dateStr, period) {
+  if (!dateStr) return false;
+  const [y, m] = dateStr.split('-');
+  if (Number(y) !== period.anno) return false;
+  if (period.mese === null) return true;
+  return Number(m) === period.mese;
+}
+
+const CATEGORY_META = {
+  spesa:        { label: 'Spesa',           dot: 'bg-amber-400',   badge: 'bg-amber-50 text-amber-700 border-amber-200' },
+  bolletta:     { label: 'Bollette',        dot: 'bg-sky-400',     badge: 'bg-sky-50 text-sky-700 border-sky-200' },
+  svago:        { label: 'Svago',           dot: 'bg-violet-400',  badge: 'bg-violet-50 text-violet-700 border-violet-200' },
+  casa:         { label: 'Casa',            dot: 'bg-emerald-400', badge: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  carta:        { label: 'Carta di Credito',dot: 'bg-rose-400',    badge: 'bg-rose-50 text-rose-700 border-rose-200' },
+  revolut:      { label: 'Flussi Revolut',  dot: 'bg-indigo-400',  badge: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  investimento: { label: 'Investimento',    dot: 'bg-teal-400',    badge: 'bg-teal-50 text-teal-700 border-teal-200' },
+};
+const EXPENSE_CATS = ['spesa','bolletta','svago','casa','carta'];
+
+function categorizza(descrizioneRaw) {
+  const d = (descrizioneRaw || '').toLowerCase();
+  if (/revolut/.test(d)) return 'revolut';
+  if (/compravendita titoli|dossier titoli|riten\.?\s*etf|ritenuta su cedole|riten\.?\s*divid|isin|titoli|azioni|eseguito ordine|acquisto fondo|vendita fondo|\bborsa\b|comparto|\betf\b/.test(d)) return 'investimento';
+  if (/carta di credito|carta credito|addebito carta|pagamento carta|utilizzo carta/.test(d)) return 'carta';
+  if (/enel|eni gas|\bgas\b|\bluce\b|\bacqua\b|telecom|\btim\b|vodafone|\bwind\b|fastweb|bolletta|utenza|internet telefono e tecnologia/.test(d)) return 'bolletta';
+  if (/netflix|spotify|cinema|ristorante|\bbar\b|pizzeria|svago|prime video|disney|steam|hotel ristoranti e viaggi/.test(d)) return 'svago';
+  if (/affitto|condominio|mutuo|\bcasa\b|ristrutturazione/.test(d)) return 'casa';
+  return 'spesa';
+}
+
+const MONEYMAP_TO_CAT = {
+  'alimentari': 'spesa',
+  'hotel ristoranti e viaggi': 'svago',
+  'altre spese': 'spesa',
+  'e-commerce': 'spesa',
+  'abbigliamento e accessori': 'spesa',
+  'mutui, finanziamenti e assicurazioni': 'casa',
+  'internet telefono e tecnologia': 'bolletta',
+  'prelievo contante': 'spesa',
+  'utenze': 'bolletta',
+  'tasse e tributi': 'spesa',
+  'salute e bellezza': 'spesa',
+  'casa': 'casa',
+  'sport': 'svago',
+  'trasporti': 'spesa',
+};
+
+function movementKey(m) {
+  const desc = (m.descrizione || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 90);
+  const amt = Math.round((m.importo || 0) * 100);
+  return `${m.data}__${amt}__${desc}`;
+}
+
+function calcolaIRPEF(reddito) {
+  const r = Math.max(0, reddito || 0);
+  if (r <= 28000) return r * 0.23;
+  if (r <= 50000) return 28000*0.23 + (r-28000)*0.35;
+  return 28000*0.23 + 22000*0.35 + (r-50000)*0.43;
+}
+function buildProiezionePensione(importoMensile, anni) {
+  const rate = Math.pow(1.04, 1/12) - 1;
+  let capitale = 0, versato = 0;
+  const punti = [{ anno: 0, capitale: 0, versato: 0 }];
+  const n = Math.max(0, Math.round(anni));
+  for (let m = 1; m <= n*12; m++) {
+    capitale = capitale * (1 + rate) + importoMensile;
+    versato += importoMensile;
+    if (m % 12 === 0) punti.push({ anno: m/12, capitale, versato });
+  }
+  return punti;
+}
+
+/* ============================== MOCK DATA (Cartella Estrazioni) ============================== */
+
+const ESTRAZIONI_FILES = [
+  { id: 'fineco_gen', name: 'Movimenti_Fineco_Gennaio.csv', kind: 'movimenti', icon: 'FileSpreadsheet' },
+  { id: 'carta_feb',  name: 'Estratto_CartaCredito_Febbraio.csv', kind: 'movimenti', icon: 'FileText' },
+  { id: 'revolut_mar',name: 'Bonifici_Revolut_Marzo.csv', kind: 'movimenti', icon: 'FileText' },
+  { id: 'lombard_q1', name: 'Report_Lombard_Q1.xlsx', kind: 'lombard', icon: 'FileSpreadsheet' },
+  { id: 'fineco_tit',  name: 'Portafoglio_Titoli_Fineco.csv', kind: 'fineco', icon: 'FileSpreadsheet' },
+];
+
+function makeMovimentiBackup(movements) {
+  const now = new Date();
+  const stamp = now.toISOString().slice(0,10) + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
+  return {
+    id: uid(),
+    name: `Backup_Movimenti_${stamp}.json`,
+    kind: 'movimenti-backup',
+    icon: 'Archive',
+    createdAt: Date.now(),
+    movimenti: movements.map(m => ({ ...m })),
+  };
+}
+
+function mockMovimenti(kind) {
+  const rows = {
+    fineco_gen: [
+      ['2026-01-05','Bonifico Fineco a Revolut', -500],
+      ['2026-01-07','PAGAMENTO POS CONAD SPESA', -84.30],
+      ['2026-01-10','ENEL ENERGIA BOLLETTA LUCE', -120.00],
+      ['2026-01-12','ADDEBITO CARTA DI CREDITO AMAZON', -59.99],
+      ['2026-01-15','NETFLIX.COM ABBONAMENTO', -15.99],
+      ['2026-01-20','ACQUISTO TITOLI ISIN IE00B4L5Y983', -1000.00],
+      ['2026-01-25','AFFITTO CASA GENNAIO', -750.00],
+    ],
+    carta_feb: [
+      ['2026-02-03','ADDEBITO CARTA DI CREDITO ESSELUNGA', -95.40],
+      ['2026-02-08','ADDEBITO CARTA DI CREDITO IKEA', -210.00],
+      ['2026-02-14','ADDEBITO CARTA DI CREDITO CINEMA UCI', -24.00],
+      ['2026-02-20','ADDEBITO CARTA DI CREDITO FARMACIA', -38.50],
+    ],
+    revolut_mar: [
+      ['2026-03-02','Bonifico Revolut Alimenti', -600.00],
+      ['2026-03-16','Fineco a Revolut Ludico', -200.00],
+      ['2026-03-22','TIM BOLLETTA TELEFONO', -29.90],
+      ['2026-03-27','RISTORANTE DA MARIO SVAGO', -68.00],
+    ],
+  };
+  return rows[kind] || [];
+}
+const MOCK_FINECO_TITOLI = [
+  { isin:'IE00B4L5Y983', nome:'iShares Core MSCI World', pma:68.50, quantita:120, prezzoCorrente:74.20 },
+  { isin:'IE00B5BMR087', nome:'iShares Core S&P 500', pma:410.00, quantita:15, prezzoCorrente:455.80 },
+];
+const MOCK_LOMBARD_TITOLI = [
+  { isin:'LU0996182563', nome:'Lombard Odier Fund Growth', pma:105.00, quantita:80, prezzoCorrente:112.40 },
+  { isin:'LU1234567890', nome:'Lombard Odier Bond Global', pma:98.00, quantita:200, prezzoCorrente:99.10 },
+];
+
+/* ============================== DEFAULTS ============================== */
+
+const DEFAULT_INCOMES = { massimiliano: 3250, susj: 1400, inps: 460, mamma: 400 };
+const INCOME_LABELS = { massimiliano: 'Massimiliano', susj: 'Susj', inps: 'INPS', mamma: 'Mamma' };
+
+function defaultMovements() {
+  return [
+    { id: uid(), data: '2026-01-05', descrizione: 'Bonifico Fineco a Revolut', importo: -500, categoria: 'revolut' },
+    { id: uid(), data: '2026-01-07', descrizione: 'PAGAMENTO POS CONAD SPESA', importo: -84.30, categoria: 'spesa' },
+    { id: uid(), data: '2026-01-12', descrizione: 'ADDEBITO CARTA DI CREDITO AMAZON', importo: -59.99, categoria: 'carta' },
+    { id: uid(), data: '2026-02-10', descrizione: 'ENEL ENERGIA BOLLETTA LUCE', importo: -120.00, categoria: 'bolletta' },
+    { id: uid(), data: '2026-02-20', descrizione: 'ADDEBITO CARTA DI CREDITO ESSELUNGA', importo: -95.40, categoria: 'carta' },
+    { id: uid(), data: '2026-03-02', descrizione: 'Bonifico Revolut Alimenti', importo: -600, categoria: 'revolut' },
+  ];
+}
+function mkTitolo(isin, nome, pma, quantita, prezzoCorrente, fonte) {
+  return { id: uid(), isin, nome, pma, quantita, prezzoCorrente, fonte };
+}
+function defaultMassimiliano() {
+  return [
+    // Fineco (portafoglio-export)
+    mkTitolo('IE00BMW42306', 'iShares MSCI Europe Financials Sector UCITS ETF EUR (Acc)', 14.99964, 917, 17.234, 'Fineco'),
+    mkTitolo('DE000A0F5UJ7', 'iShares STOXX Europe 600 Banks UCITS ETF (DE)', 36.92247, 113, 42.22, 'Fineco'),
+    mkTitolo('IE00BFNM3G45', 'iShares MSCI USA Screened UCITS ETF USD (Acc)', 11.854, 143, 13.666, 'Fineco'),
+    mkTitolo('IE00BFY0GT14', 'State Street SPDR MSCI World UCITS ETF', 41.625, 17, 46.19, 'Fineco'),
+    mkTitolo('IE00BJ0KDQ92', 'Xtrackers MSCI World UCITS ETF 1C', 124.544, 5, 138.26, 'Fineco'),
+    mkTitolo('IE00B4L5Y983', 'iShares Core MSCI World UCITS ETF USD (Acc)', 113.84, 5, 126.34, 'Fineco'),
+    mkTitolo('IE000RLW3BJ0', 'Fineco AM Pasv Underlyings 3 A EUR Acc', 113.13131, 0.495, 106.498, 'Fineco'),
+    mkTitolo('IE00BMWWJZ56', 'Infusive Cnsmr Alp Glb Ldrs FAM A EUR Acc', 104.85239, 2.947, 105.243, 'Fineco'),
+    mkTitolo('IT0005547408', 'BTP Valore 13/06/27', 99.8425, 10, 100.843, 'Fineco'),
+    mkTitolo('IT0005466013', 'BTP 1/6/32 0,95%', 76.71016, 10, 86.68, 'Fineco'),
+    // Lombard (portafoglio-export)
+    mkTitolo('IE00B3CNHG25', 'L&G Gold Mining UCITS ETF', 107.33908, 97, 113.88, 'Lombard'),
+    mkTitolo('IE00BMW42306', 'iShares MSCI Europe Financials Sector UCITS ETF EUR (Acc)', 16.32786, 694, 17.234, 'Lombard'),
+    mkTitolo('IE00BJ0KDQ92', 'Xtrackers MSCI World UCITS ETF 1C', 134.36044, 45, 138.26, 'Lombard'),
+    mkTitolo('LU1829219390', 'Amundi Euro Stoxx Banks UCITS ETF Acc', 323.45, 2, 398.05, 'Lombard'),
+    mkTitolo('DE000A2QP372', 'iShares EURO STOXX Banks 30-15 UCITS ETF (DE) Acc', 16.36391, 13, 21.015, 'Lombard'),
+    mkTitolo('IE00BM67HL84', 'Xtrackers MSCI World Financials UCITS ETF 1C', 37.45, 3, 41.805, 'Lombard'),
+    mkTitolo('DE000A0F5UJ7', 'iShares STOXX Europe 600 Banks UCITS ETF (DE)', 39.93743, 187, 42.22, 'Lombard'),
+    mkTitolo('IE000YYE6WK5', 'VanEck Defense UCITS ETF', 50.57, 1, 55.2, 'Lombard'),
+    mkTitolo('DE000A1TNV91', 'Bitcoin Group SE', 60.975, 2, 27.94, 'Lombard'),
+    mkTitolo('IT0005466013', 'BTP 1/6/32 0,95%', 76.39, 10, 86.68, 'Lombard'),
+    mkTitolo('IT0005547408', 'BTP Valore 13/06/27', 98.8475, 30, 100.843, 'Lombard'),
+  ];
+}
+function defaultInvestments() {
+  return {
+    massimiliano: defaultMassimiliano(),
+    giulia: [
+      mkTitolo('IT0005547408', 'BTP Valore 13/06/27', 98.5, 10, 100.843),
+      mkTitolo('IE00BMW42306', 'iShares MSCI Europe Financials Sector UCITS ETF EUR (Acc)', 12.072, 2, 17.234),
+    ],
+    cristiano: [
+      mkTitolo('IE00BMW42306', 'iShares MSCI Europe Financials Sector UCITS ETF EUR (Acc)', 11.94422, 102, 17.234),
+    ],
+    alessandro: [
+      mkTitolo('IT0005547408', 'BTP Valore 13/06/27', 98.5, 30, 100.843),
+      mkTitolo('IE00BMW42306', 'iShares MSCI Europe Financials Sector UCITS ETF EUR (Acc)', 12.072, 6, 17.234),
+    ],
+    mamma: [
+      mkTitolo('IE00BMW42306', 'iShares MSCI Europe Financials Sector UCITS ETF EUR (Acc)', 17.22, 116, 17.234),
+    ],
+  };
+}
+function defaultPensione() {
+  return { dataInizio: '2024-01-01', importoMensile: 200, anniInvestimento: 20, ral: 55000 };
+}
+function defaultFido() {
+  return { totale: 14000, saldoAttuale: 0, storico: [] };
+}
+function mkFinanziamento(nome, tipo, debitoResiduo, rataMensile) {
+  return { id: uid(), nome, tipo, debitoResiduo, rataMensile, attivo: true };
+}
+function defaultFinanziamenti() {
+  return [
+    mkFinanziamento('Mutuo Casa 1', 'mutuo', 120000, 580),
+    mkFinanziamento('Mutuo Casa 2', 'mutuo', 140000, 630),
+    mkFinanziamento('Prestito Auto Avvera', 'finanziamento', 3519.45, 249.5),
+    mkFinanziamento('Klarna (Clara)', 'finanziamento', 444, 63.59),
+    mkFinanziamento('Piccolo prestito (Fine)', 'finanziamento', 453, 21),
+    mkFinanziamento('Prestito Intesa Sanpaolo', 'finanziamento', 3000, 60),
+    mkFinanziamento('Prestito Fineco 1', 'finanziamento', 15668, 301.36),
+    mkFinanziamento('Prestito Fineco 2', 'finanziamento', 4141.05, 133.88),
+    mkFinanziamento('Nuovo Green Fineco (FV)', 'finanziamento', 12000, 175.02),
+  ];
+}
+function mkAgendaItem(nome, importo, scadenza, pagato) {
+  return { id: uid(), nome, importo, scadenza, pagato: !!pagato, note: '', ricevuta: null };
+}
+function defaultAgenda() {
+  return [
+    mkAgendaItem('Assicurazione Scolastica Figli', 120, '2026-09-15'),
+    mkAgendaItem('Libri di Testo', 310, '2026-09-01', true),
+    mkAgendaItem('Bollo Auto', 245, '2026-09-30'),
+    mkAgendaItem('Revisione Auto', 65, '2026-10-05'),
+  ];
+}
+
+function getAvailWidth() {
+  const winW = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  return Math.max(720, winW - 256 /* sidebar */ - 64 /* padding + scrollbar */);
+}
+
+function buildDefaultLayouts(rawWidth) {
+  const gap = 18;
+  const W = Math.max(720, Math.min(rawWidth || 1100, 2600));
+
+  const col3 = Math.max(240, Math.floor((W - gap * 2) / 3));
+  const rH = 176;
+  const riepilogo = [
+    { id:'entrate', x:0, y:0, w:col3, h:rH },
+    { id:'uscite', x:col3+gap, y:0, w:col3, h:rH },
+    { id:'investimenti', x:(col3+gap)*2, y:0, w:col3, h:rH },
+    { id:'carta', x:0, y:rH+gap, w:col3, h:rH },
+    { id:'revolut', x:col3+gap, y:rH+gap, w:col3, h:rH },
+    { id:'pensione', x:(col3+gap)*2, y:rH+gap, w:col3, h:rH },
+    { id:'salvadanaio', x:0, y:(rH+gap)*2, w:col3, h:170 },
+    { id:'fido', x:col3+gap, y:(rH+gap)*2, w:col3, h:170 },
+    { id:'finanziamenti', x:(col3+gap)*2, y:(rH+gap)*2, w:col3, h:170 },
+    { id:'agenda', x:0, y:(rH+gap)*3, w:col3, h:170 },
+  ];
+
+  const col2 = Math.max(300, Math.floor((W - gap) / 2));
+  const entrate = [
+    { id:'form', x:0, y:0, w:col2, h:360 },
+    { id:'donut', x:col2+gap, y:0, w:col2, h:360 },
+  ];
+
+  const mNarrow = Math.max(280, Math.floor(W * 0.33));
+  const mWide = Math.max(380, W - mNarrow - gap);
+  const mFullW = mNarrow + gap + mWide;
+  const movimenti = [
+    { id:'carica', x:0, y:0, w:mNarrow, h:540 },
+    { id:'tabella', x:mNarrow+gap, y:0, w:mWide, h:540 },
+    { id:'categorie', x:0, y:540+gap, w:mFullW, h:220 },
+    { id:'fido', x:0, y:540+gap+220+gap, w:mFullW, h:300 },
+  ];
+
+  const iNarrow = Math.max(280, Math.floor(W * 0.3));
+  const iWide = Math.max(380, W - iNarrow - gap);
+  const iFullW = iNarrow + gap + iWide;
+  const investimenti = [
+    { id:'carica_massimiliano', x:0, y:0, w:iNarrow, h:320 },
+    { id:'portafoglio_massimiliano', x:iNarrow+gap, y:0, w:iWide, h:320 },
+    { id:'sottoportafogli', x:0, y:320+gap, w:iFullW, h:400 },
+  ];
+
+  const pNarrow = Math.max(280, Math.floor(W * 0.28));
+  const pWide = Math.max(380, W - pNarrow - gap);
+  const pFullW = pNarrow + gap + pWide;
+  const pensione = [
+    { id:'input', x:0, y:0, w:pNarrow, h:380 },
+    { id:'proiezione', x:pNarrow+gap, y:0, w:pWide, h:380 },
+    { id:'risparmio', x:0, y:380+gap, w:pFullW, h:280 },
+  ];
+
+  const fNarrow = Math.max(280, Math.floor(W * 0.28));
+  const fWide = Math.max(380, W - fNarrow - gap);
+  const fFullW = fNarrow + gap + fWide;
+  const finanziamenti = [
+    { id:'gestisci', x:0, y:0, w:fNarrow, h:420 },
+    { id:'elenco', x:fNarrow+gap, y:0, w:fWide, h:420 },
+    { id:'riepilogo', x:0, y:420+gap, w:fFullW, h:220 },
+  ];
+
+  const aNarrow = Math.max(280, Math.floor(W * 0.28));
+  const aWide = Math.max(380, W - aNarrow - gap);
+  const aFullW = aNarrow + gap + aWide;
+  const agenda = [
+    { id:'aggiungi', x:0, y:0, w:aNarrow, h:420 },
+    { id:'elenco', x:aNarrow+gap, y:0, w:aWide, h:420 },
+    { id:'riepilogo', x:0, y:420+gap, w:aFullW, h:200 },
+  ];
+
+  return { riepilogo, entrate, movimenti, investimenti, pensione, finanziamenti, agenda };
+}
+
+/* ============================== CONTEXT ============================== */
+
+const AppCtx = createContext(null);
+function useApp() { return useContext(AppCtx); }
+
+/* ============================== SMALL UI PRIMITIVES ============================== */
+
+function IconBtn({ icon: Icon, onClick, title, className='', size=15 }) {
+  return (
+    <button type="button" onClick={onClick} title={title}
+      className={"inline-flex items-center justify-center w-8 h-8 rounded-lg border border-neutral-200 bg-white text-neutral-500 hover:text-neutral-900 hover:border-neutral-300 hover:bg-neutral-50 transition-colors " + className}>
+      <Icon size={size} />
+    </button>
+  );
+}
+function Badge({ cat }) {
+  const m = CATEGORY_META[cat] || CATEGORY_META.spesa;
+  return (
+    <span className={"inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium " + m.badge}>
+      <span className={"w-1.5 h-1.5 rounded-full " + m.dot}></span>{m.label}
+    </span>
+  );
+}
+function FieldLabel({ children }) {
+  return <label className="block text-[11px] font-semibold text-neutral-500 uppercase tracking-wide mb-1">{children}</label>;
+}
+function TextInput(props) {
+  const { className='', ...rest } = props;
+  return <input {...rest} className={"w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-400 transition " + className} />;
+}
+function PrimaryBtn({ children, onClick, icon: Icon, className='', type='button', disabled }) {
+  return (
+    <button type={type} onClick={onClick} disabled={disabled}
+      className={"inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg bg-neutral-900 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors " + className}>
+      {Icon && <Icon size={15} />}{children}
+    </button>
+  );
+}
+function GhostBtn({ children, onClick, icon: Icon, className='', active }) {
+  return (
+    <button type="button" onClick={onClick}
+      className={"inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors " +
+        (active ? "bg-neutral-900 text-white border-neutral-900" : "bg-white text-neutral-600 border-neutral-200 hover:border-neutral-300 hover:text-neutral-900") + " " + className}>
+      {Icon && <Icon size={14} />}{children}
+    </button>
+  );
+}
+function EmptyState({ icon: Icon, text }) {
+  return (
+    <div className="h-full min-h-[120px] flex flex-col items-center justify-center text-center text-neutral-400 gap-2 py-6">
+      <Icon size={26} strokeWidth={1.5} />
+      <p className="text-xs max-w-[220px] leading-relaxed">{text}</p>
+    </div>
+  );
+}
+
+/* ============================== TOASTS ============================== */
+
+function ToastStack() {
+  const { toasts, setToasts } = useApp();
+  return (
+    <div className="fixed bottom-5 right-5 z-[999] flex flex-col gap-2 items-end">
+      {toasts.map(t => (
+        <div key={t.id} className={"toast-anim px-4 py-2.5 rounded-xl shadow-lg border text-sm font-medium flex items-center gap-2 " +
+          (t.type === 'error' ? "bg-rose-600 text-white border-rose-700" : t.type === 'warn' ? "bg-amber-500 text-white border-amber-600" : "bg-neutral-900 text-white border-neutral-800")}>
+          {t.type === 'error' ? <Icons.AlertTriangle size={15}/> : t.type === 'warn' ? <Icons.AlertTriangle size={15}/> : <Icons.Check size={15}/>}
+          {t.message}
+          {t.action && (
+            <button onClick={() => { t.action.onClick(); setToasts(prev => prev.filter(x => x.id !== t.id)); }}
+              className="underline font-semibold ml-1 hover:opacity-80">
+              {t.action.label}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ============================== CHARTS (native SVG, fluid) ============================== */
+
+function DonutChart({ data, size=150 }) {
+  const total = data.reduce((s,d)=>s+Math.max(0,d.value),0) || 1;
+  const segments = useMemo(() => {
+    let acc = 0;
+    return data.map(d => {
+      const frac = Math.max(0,d.value) / total;
+      const seg = { ...d, frac, offset: acc };
+      acc += frac;
+      return seg;
+    });
+  }, [data, total]);
+  const R = 40, C = 2*Math.PI*R;
+  return (
+    <div className="flex flex-col items-center justify-center h-full w-full gap-4">
+      <svg viewBox="0 0 120 120" style={{ width: size, height: size }}>
+        <g transform="translate(60,60) rotate(-90)">
+          <circle r={R} fill="none" stroke="#f4f4f5" strokeWidth="16" />
+          {segments.map((s,i) => (
+            <circle key={i} r={R} fill="none" stroke={s.color} strokeWidth="16"
+              strokeDasharray={`${s.frac*C} ${C - s.frac*C}`}
+              strokeDashoffset={-s.offset*C}
+              strokeLinecap="butt" />
+          ))}
+        </g>
+        <text x="60" y="56" textAnchor="middle" fontSize="11" fontWeight="800" fill="#18181b">{fmtEUR(total)}</text>
+        <text x="60" y="70" textAnchor="middle" fontSize="8" fill="#a1a1aa">Totale mensile</text>
+      </svg>
+      <div className="w-full grid grid-cols-1 gap-1.5 px-2">
+        {data.map((d,i) => (
+          <div key={i} className="flex items-center justify-between text-xs">
+            <span className="flex items-center gap-2 text-neutral-600"><span className="w-2 h-2 rounded-full" style={{background:d.color}}></span>{d.label}</span>
+            <span className="font-semibold text-neutral-800">{fmtEUR(d.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LineChartSVG({ points, color='#4f46e5', valueKey='capitale', height=240 }) {
+  const width = 640;
+  const pad = 34;
+  const maxY = Math.max(...points.map(p=>p[valueKey]), 1);
+  const maxX = Math.max(...points.map(p=>p.anno), 1);
+  const toX = (x) => pad + (x/maxX)*(width-pad*2);
+  const toY = (y) => (height-pad) - (y/maxY)*(height-pad*2);
+  const path = points.map((p,i) => `${i===0?'M':'L'} ${toX(p.anno).toFixed(1)} ${toY(p[valueKey]).toFixed(1)}`).join(' ');
+  const areaPath = points.length ? `${path} L ${toX(points[points.length-1].anno).toFixed(1)} ${height-pad} L ${toX(points[0].anno).toFixed(1)} ${height-pad} Z` : '';
+  const gridId = 'grad-' + valueKey;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%" preserveAspectRatio="none" style={{ minHeight: 180 }}>
+      <defs>
+        <linearGradient id={gridId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      {[0,0.25,0.5,0.75,1].map((t,i) => {
+        const y = (height-pad) - t*(height-pad*2);
+        return <line key={i} x1={pad} x2={width-pad} y1={y} y2={y} stroke="#f1f1f2" strokeWidth="1" />;
+      })}
+      <path d={areaPath} fill={`url(#${gridId})`} stroke="none" />
+      <path d={path} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {points.map((p,i) => (
+        <circle key={i} cx={toX(p.anno)} cy={toY(p[valueKey])} r="3.2" fill="white" stroke={color} strokeWidth="2" />
+      ))}
+      {points.map((p,i) => (
+        (i===0 || i===points.length-1 || i % Math.ceil(points.length/6)===0) &&
+        <text key={'t'+i} x={toX(p.anno)} y={height-8} textAnchor="middle" fontSize="9" fill="#a1a1aa">Anno {p.anno}</text>
+      ))}
+    </svg>
+  );
+}
+
+/* ============================== DRAG / RESIZE GRID ENGINE ============================== */
+
+function Widget({ dashKey, id, title, icon: Icon, layout, onLayoutChange, children, accent='text-neutral-500' }) {
+  const dragRef = useRef(null);
+  const resizeRef = useRef(null);
+
+  const onDragMove = useCallback((e) => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.sx;
+    const dy = e.clientY - dragRef.current.sy;
+    onLayoutChange(id, { x: Math.max(0, dragRef.current.ox + dx), y: Math.max(0, dragRef.current.oy + dy) });
+  }, [id, onLayoutChange]);
+  const onDragEnd = useCallback(() => {
+    dragRef.current = null;
+    document.body.style.cursor = '';
+    document.body.classList.remove('no-select');
+    document.removeEventListener('mousemove', onDragMove);
+    document.removeEventListener('mouseup', onDragEnd);
+  }, [onDragMove]);
+  const startDrag = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    dragRef.current = { sx: e.clientX, sy: e.clientY, ox: layout.x, oy: layout.y };
+    document.body.style.cursor = 'move';
+    document.body.classList.add('no-select');
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('mouseup', onDragEnd);
+  };
+
+  const onResizeMove = useCallback((e) => {
+    if (!resizeRef.current) return;
+    const dw = e.clientX - resizeRef.current.sx;
+    const dh = e.clientY - resizeRef.current.sy;
+    onLayoutChange(id, { w: Math.max(280, resizeRef.current.ow + dw), h: Math.max(160, resizeRef.current.oh + dh) });
+  }, [id, onLayoutChange]);
+  const onResizeEnd = useCallback(() => {
+    resizeRef.current = null;
+    document.body.style.cursor = '';
+    document.body.classList.remove('no-select');
+    document.removeEventListener('mousemove', onResizeMove);
+    document.removeEventListener('mouseup', onResizeEnd);
+  }, [onResizeMove]);
+  const startResize = (e) => {
+    e.preventDefault(); e.stopPropagation();
+    resizeRef.current = { sx: e.clientX, sy: e.clientY, ow: layout.w, oh: layout.h };
+    document.body.style.cursor = 'nwse-resize';
+    document.body.classList.add('no-select');
+    document.addEventListener('mousemove', onResizeMove);
+    document.addEventListener('mouseup', onResizeEnd);
+  };
+
+  return (
+    <div style={{ position:'absolute', left: layout.x, top: layout.y, width: layout.w, height: layout.h }}
+      className="bg-white border border-neutral-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow flex flex-col overflow-hidden fade-in">
+      <div onMouseDown={startDrag} className="no-select flex items-center justify-between gap-2 px-4 py-3 border-b border-neutral-100 cursor-move bg-neutral-50/60 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon size={16} className={accent + " shrink-0"} />
+          <span className="text-sm font-semibold text-neutral-800 truncate">{title}</span>
+        </div>
+        <Icons.GripVertical size={14} className="text-neutral-300 shrink-0" />
+      </div>
+      <div className="flex-1 overflow-auto min-h-0">{children}</div>
+      <div onMouseDown={startResize}
+        className="absolute bottom-0 right-0 w-6 h-6 cursor-nwse-resize flex items-end justify-end p-1.5 text-neutral-300 hover:text-neutral-600 transition-colors">
+        <Icons.Maximize2 size={12} />
+      </div>
+    </div>
+  );
+}
+
+function useIsMobile(breakpoint) {
+  const bp = breakpoint || 860;
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < bp : false);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia(`(max-width: ${bp - 1}px)`);
+    const handler = () => setIsMobile(mq.matches);
+    handler();
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [bp]);
+  return isMobile;
+}
+
+function StackedWidget({ title, icon: Icon, accent='text-neutral-500', children }) {
+  return (
+    <div className="bg-white border border-neutral-200 rounded-2xl shadow-sm overflow-hidden flex flex-col">
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-100 bg-neutral-50/60 shrink-0">
+        <Icon size={16} className={accent + " shrink-0"} />
+        <span className="text-sm font-semibold text-neutral-800 truncate">{title}</span>
+      </div>
+      <div className="max-h-[75vh] overflow-auto">{children}</div>
+    </div>
+  );
+}
+
+function GridCanvas({ dashKey, widgets }) {
+  const { layouts, setLayouts } = useApp();
+  const isMobile = useIsMobile();
+  const layout = layouts[dashKey];
+  const onLayoutChange = useCallback((id, patch) => {
+    setLayouts(prev => ({ ...prev, [dashKey]: prev[dashKey].map(w => w.id === id ? { ...w, ...patch } : w) }));
+  }, [dashKey, setLayouts]);
+
+  if (isMobile) {
+    return (
+      <div className="flex flex-col gap-4 pb-8">
+        {widgets.map(w => (
+          <StackedWidget key={w.id} title={w.title} icon={w.icon} accent={w.accent}>{w.render}</StackedWidget>
+        ))}
+      </div>
+    );
+  }
+
+  const height = Math.max(400, ...layout.map(w => w.y + w.h + 32));
+  const width = Math.max(600, ...layout.map(w => w.x + w.w + 32));
+  return (
+    <div className="relative" style={{ height, width }}>
+      {widgets.map(w => {
+        const l = layout.find(x => x.id === w.id);
+        if (!l) return null;
+        return (
+          <Widget key={w.id} dashKey={dashKey} id={w.id} title={w.title} icon={w.icon} accent={w.accent} layout={l} onLayoutChange={onLayoutChange}>
+            {w.render}
+          </Widget>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ============================== DASHBOARD HEADER ============================== */
+
+function DashboardHeader({ title, subtitle, icon: Icon, onReset, resetLabel, extra }) {
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div className="flex items-start justify-between mb-6 px-1 gap-3 flex-wrap">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-neutral-900 text-white flex items-center justify-center shrink-0 mt-0.5">
+          <Icon size={19} />
+        </div>
+        <div>
+          <h1 className="text-xl font-bold text-neutral-900 tracking-tight">{title}</h1>
+          <p className="text-sm text-neutral-500 mt-0.5">{subtitle}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+      {extra}
+      {confirming ? (
+        <div className="flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1.5">
+          <span className="text-xs font-medium text-rose-700">{resetLabel || 'Confermi il reset?'}</span>
+          <button onClick={() => { onReset(); setConfirming(false); }} className="text-xs font-semibold text-rose-700 hover:text-rose-900 underline">Sì</button>
+          <button onClick={() => setConfirming(false)} className="text-xs font-medium text-neutral-500 hover:text-neutral-700">Annulla</button>
+        </div>
+      ) : (
+        <button onClick={() => setConfirming(true)} title="Reset Dashboard"
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-neutral-500 hover:text-rose-600 hover:border-rose-200 hover:bg-rose-50 text-sm font-medium transition-colors">
+          <Icons.Trash2 size={14} /> Reset Dashboard
+        </button>
+      )}
+      </div>
+    </div>
+  );
+}
+
+function SaveProgressButton() {
+  const { saveProgress, lastSaved, driveConnected, driveStatus } = useApp();
+  const [justSaved, setJustSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const handleClick = async () => {
+    setSaving(true);
+    await saveProgress();
+    setSaving(false);
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 1800);
+  };
+  const busy = saving || driveStatus === 'syncing';
+  const title = (lastSaved ? `Ultimo salvataggio: ${lastSaved.toLocaleTimeString('it-IT')} · ${lastSaved.toLocaleDateString('it-IT')}` : 'Nessun salvataggio ancora effettuato') +
+    (driveConnected ? ' · Google Drive collegato' : '');
+  return (
+    <button onClick={handleClick} disabled={busy} title={title}
+      className={"inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors disabled:opacity-60 " +
+        (justSaved ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-white border-neutral-200 text-neutral-500 hover:text-neutral-900 hover:border-neutral-300")}>
+      {busy ? <Icons.Loader2 size={14} className="animate-spin" /> : justSaved ? <Icons.Check size={14} /> : driveConnected ? <Icons.Cloud size={14} /> : <Icons.Save size={14} />}
+      {busy ? 'Salvataggio...' : justSaved ? 'Salvato' : 'Salva Progressi'}
+    </button>
+  );
+}
+
+function DriveSettingsPanel() {
+  const { driveClientId, setDriveClientId, driveConnected, driveStatus, gsiReady, connectDrive, disconnectDrive, forgetDriveFolder, pushToast } = useApp();
+  const [open, setOpen] = useState(false);
+  const [inputId, setInputId] = useState(driveClientId);
+
+  const handleSaveClientId = () => {
+    if (!inputId.trim()) { pushToast('Incolla il Client ID di Google.', 'warn'); return; }
+    setDriveClientId(inputId);
+    pushToast('Client ID salvato');
+  };
+
+  return (
+    <div className="border-t border-neutral-100">
+      <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-5 py-3 text-[11px] font-semibold text-neutral-500 hover:text-neutral-900 transition-colors">
+        <span className="flex items-center gap-1.5">
+          <Icons.Cloud size={13} className={driveConnected ? "text-emerald-500" : "text-neutral-400"} />
+          {driveConnected ? 'Google Drive collegato' : 'Salvataggio su Google Drive'}
+        </span>
+        <Icons.ChevronDown size={13} className={"transition-transform " + (open ? "rotate-180" : "")} />
+      </button>
+      {open && (
+        <div className="px-5 pb-4 flex flex-col gap-2.5">
+          {!driveConnected ? (
+            <>
+              <FieldLabel>Client ID Google (OAuth)</FieldLabel>
+              <TextInput type="text" placeholder="xxxx.apps.googleusercontent.com" value={inputId}
+                onChange={(e) => setInputId(e.target.value)} className="text-[11px]" />
+              <GhostBtn onClick={handleSaveClientId} className="w-full justify-center">Salva Client ID</GhostBtn>
+              <PrimaryBtn onClick={connectDrive} icon={Icons.Cloud} className="w-full" disabled={driveStatus === 'connecting' || !gsiReady}>
+                {driveStatus === 'connecting' ? 'Connessione...' : gsiReady ? 'Connetti Google Drive' : 'Caricamento libreria Google...'}
+              </PrimaryBtn>
+              <p className="text-[10px] text-neutral-400 leading-relaxed">
+                Serve un Client ID OAuth gratuito da Google Cloud Console. Funziona solo se questa pagina è aperta da un indirizzo web (non da un file locale).
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[10.5px] text-emerald-600 font-medium flex items-center gap-1"><Icons.Check size={12} /> Cartella "{DRIVE_FOLDER_NAME}" su Drive</p>
+              <button onClick={disconnectDrive} className="text-[10.5px] text-neutral-400 hover:text-neutral-700 text-left underline">Scollega per questa sessione</button>
+              <button onClick={forgetDriveFolder} className="text-[10.5px] text-neutral-400 hover:text-rose-600 text-left underline">Dimentica cartella (riconfigura)</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================== SIDEBAR ============================== */
+
+const NAV_ITEMS = [
+  { key:'riepilogo', label:'Riepilogo', icon: 'LayoutDashboard' },
+  { key:'entrate', label:'Entrate', icon: 'Wallet' },
+  { key:'movimenti', label:'Movimenti', icon: 'ArrowLeftRight' },
+  { key:'agenda', label:'Agenda Spese', icon: 'Calendar' },
+  { key:'investimenti', label:'Investimenti', icon: 'TrendingUp' },
+  { key:'finanziamenti', label:'Finanziamenti e Mutui', icon: 'Building2' },
+  { key:'pensione', label:'Seconda Pensione', icon: 'ShieldCheck' },
+];
+
+function EstrazioneChip({ file, onRemove, isBackup }) {
+  const Icon = Icons[file.icon] || Icons.FileText;
+  return (
+    <div draggable
+      onDragStart={(e) => { e.dataTransfer.setData('application/x-estrazione-id', file.id); e.dataTransfer.effectAllowed = 'copy'; }}
+      title={isBackup ? `Backup di ${file.movimenti?.length ?? 0} movimenti · trascinalo per ripristinarli` : undefined}
+      className={"group flex items-center gap-2 px-2.5 py-2 rounded-lg border hover:bg-white hover:shadow-sm cursor-grab active:cursor-grabbing transition-all " +
+        (isBackup ? "border-amber-200 bg-amber-50 hover:border-amber-300" : "border-neutral-200 bg-neutral-50 hover:border-neutral-300")}>
+      <Icon size={14} className={"shrink-0 " + (isBackup ? "text-amber-500" : "text-neutral-400 group-hover:text-neutral-600")} />
+      <span className="flex-1 text-[11px] text-neutral-600 truncate leading-tight">{file.name}</span>
+      <button onClick={(e) => { e.stopPropagation(); onRemove(file.id); }} title="Rimuovi file"
+        className="shrink-0 opacity-0 group-hover:opacity-100 text-neutral-300 hover:text-rose-500 transition-opacity">
+        <Icons.X size={13} />
+      </button>
+    </div>
+  );
+}
+
+function Sidebar({ view, setView, isMobile, open, onClose }) {
+  const { period, setPeriod, hiddenFiles, setHiddenFiles, estrazioniBackups, setEstrazioniBackups } = useApp();
+  const visibleFiles = ESTRAZIONI_FILES.filter(f => !hiddenFiles.includes(f.id));
+  const removeFile = (id) => setHiddenFiles(prev => prev.includes(id) ? prev : [...prev, id]);
+  const restoreFiles = () => setHiddenFiles([]);
+  const removeBackup = (id) => setEstrazioniBackups(prev => prev.filter(b => b.id !== id));
+  const goTo = (key) => { setView(key); if (isMobile && onClose) onClose(); };
+
+  const containerClass = isMobile
+    ? "fixed inset-y-0 left-0 z-50 w-72 bg-white border-r border-neutral-200 flex flex-col transition-transform duration-200 " + (open ? "translate-x-0" : "-translate-x-full")
+    : "w-64 shrink-0 h-screen sticky top-0 bg-white border-r border-neutral-200 flex flex-col";
+
+  return (
+    <>
+      {isMobile && open && <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose}></div>}
+      <div className={containerClass}>
+      <div className="px-5 pt-6 pb-5 border-b border-neutral-100 flex items-start justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-neutral-900 flex items-center justify-center shrink-0">
+            <Icons.Home size={18} className="text-white" />
+          </div>
+          <div>
+            <h2 className="text-sm font-bold text-neutral-900 leading-tight">Gestione dei Flussi</h2>
+            <p className="text-[11px] text-neutral-400 leading-tight">di Casa</p>
+          </div>
+        </div>
+        {isMobile && (
+          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-700 shrink-0"><Icons.X size={18} /></button>
+        )}
+      </div>
+
+      <div className="px-3 py-4 border-b border-neutral-100">
+        <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide px-2 mb-2">Filtro Periodo</p>
+        <div className="flex gap-2 px-1">
+          <select value={period.mese === null ? 'tutti' : period.mese}
+            onChange={(e) => setPeriod(p => ({ ...p, mese: e.target.value === 'tutti' ? null : Number(e.target.value) }))}
+            className="flex-1 min-w-0 text-xs font-medium bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-2 text-neutral-700 focus:outline-none focus:ring-2 focus:ring-neutral-900/10">
+            <option value="tutti">Tutti i mesi</option>
+            {MESI.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+          </select>
+          <select value={period.anno}
+            onChange={(e) => setPeriod(p => ({ ...p, anno: Number(e.target.value) }))}
+            className="w-20 text-xs font-medium bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-2 text-neutral-700 focus:outline-none focus:ring-2 focus:ring-neutral-900/10">
+            {ANNI.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <nav className="px-3 py-4 border-b border-neutral-100">
+        {NAV_ITEMS.map(item => {
+          const Icon = Icons[item.icon];
+          const active = view === item.key;
+          return (
+            <button key={item.key} onClick={() => goTo(item.key)}
+              className={"w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm font-medium mb-1 transition-colors " +
+                (active ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-100")}>
+              <Icon size={16} />{item.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="flex-1 overflow-y-auto px-3 py-4">
+        <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wide px-2 mb-2 flex items-center gap-1.5">
+          <Icons.FolderOpen size={12} /> Cartella Estrazioni
+        </p>
+        <p className="text-[10.5px] text-neutral-400 px-2 mb-3 leading-relaxed">Trascina un file in una dropzone per caricarlo rapidamente, o rimuovilo con la X.</p>
+        {estrazioniBackups.length > 0 && (
+          <>
+            <p className="text-[10px] font-semibold text-amber-500 uppercase tracking-wide px-2 mb-1.5">I tuoi backup</p>
+            <div className="flex flex-col gap-1.5 px-1 mb-3">
+              {estrazioniBackups.map(f => <EstrazioneChip key={f.id} file={f} onRemove={removeBackup} isBackup />)}
+            </div>
+          </>
+        )}
+        <div className="flex flex-col gap-1.5 px-1">
+          {visibleFiles.map(f => <EstrazioneChip key={f.id} file={f} onRemove={removeFile} />)}
+        </div>
+        {visibleFiles.length === 0 && (
+          <div className="px-1">
+            <p className="text-[11px] text-neutral-400 mb-2">Nessun file di esempio rimasto.</p>
+            <button onClick={restoreFiles} className="text-[11px] font-medium text-neutral-500 hover:text-neutral-900 underline">Ripristina file di esempio</button>
+          </div>
+        )}
+      </div>
+
+      <div className="px-5 py-3 border-t border-neutral-100">
+        <p className="text-[10px] text-neutral-400 leading-relaxed">
+          <Icons.Download size={11} className="inline -mt-0.5 mr-1" />Per metterla sul desktop: menu del browser (⋮) → <b>"Installa app"</b> o <b>"Crea scorciatoia"</b>
+        </p>
+      </div>
+      <DriveSettingsPanel />
+      <SidebarDataStatus />
+      </div>
+    </>
+  );
+}
+
+function SidebarDataStatus() {
+  const { driveConnected } = useApp();
+  return (
+    <div className="px-5 py-3 border-t border-neutral-100 text-[10.5px] text-neutral-400">
+      {driveConnected ? 'Dati sincronizzati su Google Drive' : 'Dati in memoria locale · nessuna sincronizzazione'}
+    </div>
+  );
+}
+
+/* ============================== RIEPILOGO ============================== */
+
+function StatCard({ icon: Icon, label, value, sub, tone='neutral', trend }) {
+  const toneMap = {
+    neutral: 'bg-neutral-100 text-neutral-600',
+    green: 'bg-emerald-100 text-emerald-600',
+    red: 'bg-rose-100 text-rose-600',
+    blue: 'bg-sky-100 text-sky-600',
+    indigo: 'bg-indigo-100 text-indigo-600',
+    violet: 'bg-violet-100 text-violet-600',
+    amber: 'bg-amber-100 text-amber-600',
+  };
+  return (
+    <div className="h-full flex flex-col justify-between p-4">
+      <div className="flex items-center justify-between">
+        <div className={"w-8 h-8 rounded-xl flex items-center justify-center " + (toneMap[tone] || toneMap.neutral)}>
+          <Icon size={16} />
+        </div>
+        {trend !== undefined && (
+          <span className={"inline-flex items-center gap-1 text-xs font-semibold " + (trend >= 0 ? "text-emerald-600" : "text-rose-600")}>
+            {trend >= 0 ? <Icons.ArrowUpRight size={13} /> : <Icons.ArrowDownRight size={13} />}
+            {fmtPct(trend)}
+          </span>
+        )}
+      </div>
+      <div>
+        <p className="text-2xl font-bold text-neutral-900 tracking-tight">{value}</p>
+        <p className="text-xs text-neutral-500 mt-1">{label}</p>
+        {sub && <p className="text-[11px] text-neutral-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ============================== FIDO TRACKER ============================== */
+
+function computeFidoStats(fido) {
+  const totale = Number(fido.totale) || 0;
+  const versato = Math.min(totale, Math.max(0, Math.abs(Number(fido.saldoAttuale) || 0)));
+  const mancante = Math.max(0, totale - versato);
+  const pctMancante = totale > 0 ? Math.min(100, Math.max(0, (mancante / totale) * 100)) : 0;
+  const pctVersato = totale > 0 ? Math.min(100, Math.max(0, (versato / totale) * 100)) : 0;
+  const completato = totale > 0 && versato >= totale;
+  return { totale, versato, mancante, pctMancante, pctVersato, completato };
+}
+
+function FidoProgressBar({ pct, completato }) {
+  return (
+    <div className="w-full h-3 rounded-full bg-neutral-100 overflow-hidden">
+      <div className={"h-full rounded-full transition-all " + (completato ? "bg-emerald-500" : pct > 60 ? "bg-emerald-400" : pct > 25 ? "bg-amber-400" : "bg-rose-400")}
+        style={{ width: `${Math.max(3, pct)}%` }}></div>
+    </div>
+  );
+}
+
+function FidoSummaryCard() {
+  const { fido } = useApp();
+  const { totale, mancante, pctVersato, completato } = computeFidoStats(fido);
+  return (
+    <div className="h-full flex flex-col justify-between p-4">
+      <div className="flex items-center justify-between">
+        <div className={"w-8 h-8 rounded-xl flex items-center justify-center " + (completato ? "bg-emerald-100 text-emerald-600" : "bg-amber-100 text-amber-600")}>
+          <Icons.Landmark size={16} />
+        </div>
+        <span className={"text-xs font-bold " + (completato ? "text-emerald-600" : "text-neutral-600")}>{pctVersato.toFixed(0)}%</span>
+      </div>
+      <div>
+        <FidoProgressBar pct={pctVersato} completato={completato} />
+        <p className="text-lg font-bold text-neutral-900 tracking-tight mt-2">{fmtEUR(mancante)} <span className="text-xs font-medium text-neutral-400">da dare / {fmtEUR(totale)}</span></p>
+        <p className="text-xs text-neutral-500 mt-0.5">
+          {completato ? 'Fido azzerato — nessun rientro dovuto' : `Totale da dare: ${fmtEUR(mancante)} (${((100-pctVersato)).toFixed(0)}%)`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FidoTrackerWidget() {
+  const { fido, setFido, pushToast } = useApp();
+  const [nuovoSaldo, setNuovoSaldo] = useState('');
+  const [nuovaData, setNuovaData] = useState(() => new Date().toISOString().slice(0, 10));
+  const { totale, versato, mancante, pctMancante, pctVersato, completato } = computeFidoStats(fido);
+
+  const registraSaldo = () => {
+    const raw = parseImporto(nuovoSaldo);
+    if (raw === null) { pushToast('Inserisci quanto hai già rimesso sul conto (es. 7990).', 'warn'); return; }
+    const val = Math.abs(raw);
+    setFido(prev => ({
+      ...prev,
+      saldoAttuale: val,
+      storico: [{ id: uid(), data: nuovaData, saldo: val }, ...prev.storico].slice(0, 40),
+    }));
+    setNuovoSaldo('');
+    pushToast('Saldo aggiornato');
+  };
+
+  return (
+    <div className="p-4 h-full flex flex-col md:flex-row gap-5">
+      <div className="flex-1 min-w-[240px] flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <FieldLabel>Fido Concesso (€)</FieldLabel>
+            <TextInput type="number" step="100" value={fido.totale}
+              onChange={(e) => setFido(prev => ({ ...prev, totale: e.target.value === '' ? '' : Number(e.target.value) }))} />
+          </div>
+          <div>
+            <FieldLabel>Saldo Attuale sul Conto (€)</FieldLabel>
+            <TextInput type="text" placeholder="es. 7990" value={nuovoSaldo}
+              onChange={(e) => setNuovoSaldo(e.target.value)} onKeyDown={(e)=>{ if(e.key==='Enter') registraSaldo(); }} />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <TextInput type="date" value={nuovaData} onChange={(e) => setNuovaData(e.target.value)} className="w-40" />
+          <PrimaryBtn onClick={registraSaldo} icon={Icons.Save} className="flex-1">Registra saldo</PrimaryBtn>
+        </div>
+        <p className="text-[10.5px] text-neutral-400 leading-relaxed">
+          Inserisci quanto hai già rimesso sul conto per rientrare dal fido (un numero positivo, es. 7990). Versato finora: <span className="font-semibold text-neutral-600">{fmtEUR(versato)}</span>.
+        </p>
+        <div className="bg-neutral-50 rounded-lg px-3 py-2 text-xs text-neutral-600 flex items-center justify-between flex-wrap gap-x-2">
+          <span>Fido {fmtEUR(totale)} − Saldo {fmtEUR(versato)}</span>
+          <span className="font-bold text-neutral-900">= {fmtEUR(mancante)} da dare</span>
+        </div>
+      </div>
+
+      <div className="flex-1 min-w-[240px] flex flex-col justify-center gap-3">
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-semibold text-neutral-700">Stato di avanzamento</span>
+          <span className={"px-2.5 py-1 rounded-full text-[11px] font-bold " + (completato ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}>
+            {completato ? 'FIDO AZZERATO' : `${pctMancante.toFixed(0)}% DA DARE`}
+          </span>
+        </div>
+        <FidoProgressBar pct={pctVersato} completato={completato} />
+        <div className="grid grid-cols-2 gap-2 mt-1">
+          <div className="bg-neutral-50 rounded-lg p-2.5">
+            <p className="text-[10px] text-neutral-400">Già Versato</p>
+            <p className="text-sm font-bold text-emerald-600">{fmtEUR(versato)} <span className="text-[10px] font-medium text-neutral-400">({pctVersato.toFixed(0)}%)</span></p>
+          </div>
+          <div className="bg-neutral-50 rounded-lg p-2.5">
+            <p className="text-[10px] text-neutral-400">Totale da Dare</p>
+            <p className="text-sm font-bold text-rose-600">{fmtEUR(mancante)} <span className="text-[10px] font-medium text-neutral-400">({pctMancante.toFixed(0)}%)</span></p>
+          </div>
+        </div>
+      </div>
+
+      <div className="w-full md:w-56 shrink-0 md:border-l md:border-neutral-100 md:pl-4">
+        <FieldLabel>Storico saldi</FieldLabel>
+        {fido.storico.length === 0 ? (
+          <p className="text-[11px] text-neutral-400 mt-1">Nessun aggiornamento registrato ancora.</p>
+        ) : (
+          <div className="flex flex-col gap-1.5 max-h-40 overflow-auto pr-1">
+            {fido.storico.map(h => (
+              <div key={h.id} className="flex items-center justify-between text-xs">
+                <span className="text-neutral-400">{h.data}</span>
+                <span className={"font-semibold " + (h.saldo >= (Number(fido.totale)||0) ? "text-emerald-600" : "text-neutral-700")}>
+                  {h.saldo >= (Number(fido.totale)||0) ? 'Azzerato ✓' : fmtEUR(h.saldo)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ============================== FINANZIAMENTI E MUTUI ============================== */
+
+const TIPO_FINANZIAMENTO_META = {
+  mutuo: { label: 'Mutuo', badge: 'bg-indigo-50 text-indigo-700 border-indigo-200', dot: 'bg-indigo-400' },
+  finanziamento: { label: 'Finanziamento', badge: 'bg-violet-50 text-violet-700 border-violet-200', dot: 'bg-violet-400' },
+};
+
+function computeFinanziamentiStats(items) {
+  const attivi = items.filter(i => i.attivo);
+  const estinti = items.filter(i => !i.attivo);
+  const mutui = attivi.filter(i => i.tipo === 'mutuo');
+  const finanziamenti = attivi.filter(i => i.tipo === 'finanziamento');
+  const rataMutui = mutui.reduce((s,i) => s + (Number(i.rataMensile) || 0), 0);
+  const rataFinanziamenti = finanziamenti.reduce((s,i) => s + (Number(i.rataMensile) || 0), 0);
+  const rataTotale = rataMutui + rataFinanziamenti;
+  const debitoResiduoTotale = attivi.reduce((s,i) => s + (Number(i.debitoResiduo) || 0), 0);
+  return { attivi, estinti, mutui, finanziamenti, rataMutui, rataFinanziamenti, rataTotale, debitoResiduoTotale };
+}
+
+function FinanziamentiSummaryCard() {
+  const { finanziamenti } = useApp();
+  const stats = computeFinanziamentiStats(finanziamenti);
+  return (
+    <div className="h-full flex flex-col justify-between p-4">
+      <div className="flex items-center justify-between">
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-indigo-100 text-indigo-600">
+          <Icons.Building2 size={16} />
+        </div>
+        <span className="text-[10.5px] font-semibold text-neutral-400">{stats.attivi.length} attivi{stats.estinti.length > 0 ? ` · ${stats.estinti.length} estinti` : ''}</span>
+      </div>
+      <div>
+        <p className="text-2xl font-bold text-neutral-900 tracking-tight">{fmtEUR(stats.rataTotale)}</p>
+        <p className="text-xs text-neutral-500 mt-1">Rate mensili totali</p>
+        <p className="text-[11px] text-neutral-400 mt-0.5">Mutui {fmtEUR(stats.rataMutui)} · Finanziamenti {fmtEUR(stats.rataFinanziamenti)}</p>
+      </div>
+    </div>
+  );
+}
+
+function FinanziamentiRiepilogoWidget() {
+  const { finanziamenti } = useApp();
+  const stats = computeFinanziamentiStats(finanziamenti);
+  const maxSplit = Math.max(1, stats.rataMutui, stats.rataFinanziamenti);
+  return (
+    <div className="p-5 h-full">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="bg-neutral-50 rounded-xl p-4">
+          <p className="text-[11px] text-neutral-400 mb-1">Rate Totali Mensili</p>
+          <p className="text-lg font-bold text-neutral-900">{fmtEUR(stats.rataTotale)}</p>
+          <p className="text-[10.5px] text-neutral-400 mt-1">{stats.attivi.length} finanziamenti/mutui attivi</p>
+        </div>
+        <div className="bg-indigo-50 rounded-xl p-4">
+          <p className="text-[11px] text-indigo-600 mb-1">Mutui</p>
+          <p className="text-lg font-bold text-indigo-700">{fmtEUR(stats.rataMutui)}</p>
+          <p className="text-[10.5px] text-indigo-500 mt-1">{stats.mutui.length} attivi</p>
+        </div>
+        <div className="bg-violet-50 rounded-xl p-4">
+          <p className="text-[11px] text-violet-600 mb-1">Finanziamenti</p>
+          <p className="text-lg font-bold text-violet-700">{fmtEUR(stats.rataFinanziamenti)}</p>
+          <p className="text-[10.5px] text-violet-500 mt-1">{stats.finanziamenti.length} attivi</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-neutral-500 w-24 shrink-0">Mutui</span>
+        <span className="flex-1 h-2.5 rounded-full bg-neutral-100 overflow-hidden">
+          <span className="block h-full rounded-full bg-indigo-400" style={{ width: `${Math.max(3,(stats.rataMutui/maxSplit)*100)}%` }}></span>
+        </span>
+        <span className="text-xs font-semibold text-neutral-700 w-20 text-right shrink-0">{fmtEUR(stats.rataMutui)}</span>
+      </div>
+      <div className="flex items-center gap-3 mt-2">
+        <span className="text-xs text-neutral-500 w-24 shrink-0">Finanziamenti</span>
+        <span className="flex-1 h-2.5 rounded-full bg-neutral-100 overflow-hidden">
+          <span className="block h-full rounded-full bg-violet-400" style={{ width: `${Math.max(3,(stats.rataFinanziamenti/maxSplit)*100)}%` }}></span>
+        </span>
+        <span className="text-xs font-semibold text-neutral-700 w-20 text-right shrink-0">{fmtEUR(stats.rataFinanziamenti)}</span>
+      </div>
+      <p className="text-[10.5px] text-neutral-400 mt-4">Debito residuo totale (voci attive): <span className="font-semibold text-neutral-600">{fmtEUR(stats.debitoResiduoTotale)}</span></p>
+    </div>
+  );
+}
+
+function FinanziamentiDashboard() {
+  const { finanziamenti, setFinanziamenti, resetDashboard, pushToast } = useApp();
+  const [nuovo, setNuovo] = useState({ nome:'', tipo:'finanziamento', debitoResiduo:'', rataMensile:'' });
+
+  const toggleAttivo = (id) => setFinanziamenti(prev => prev.map(f => f.id === id ? { ...f, attivo: !f.attivo } : f));
+  const updateItem = (id, patch) => setFinanziamenti(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
+  const removeItem = (id) => {
+    const removed = finanziamenti.find(f => f.id === id);
+    setFinanziamenti(prev => prev.filter(f => f.id !== id));
+    if (removed) pushToast('Voce rimossa', 'warn', { label: 'Annulla', onClick: () => setFinanziamenti(prev => [removed, ...prev]) });
+  };
+  const addItem = () => {
+    const debito = parseImporto(nuovo.debitoResiduo);
+    const rata = parseImporto(nuovo.rataMensile);
+    if (!nuovo.nome.trim() || debito === null || rata === null) { pushToast('Compila nome, debito residuo e rata mensile.', 'warn'); return; }
+    setFinanziamenti(prev => [mkFinanziamento(nuovo.nome.trim(), nuovo.tipo, debito, rata), ...prev]);
+    setNuovo({ nome:'', tipo:'finanziamento', debitoResiduo:'', rataMensile:'' });
+    pushToast('Finanziamento aggiunto');
+  };
+
+  const ordinati = useMemo(() => [...finanziamenti].sort((a,b) => (a.attivo === b.attivo) ? 0 : (a.attivo ? -1 : 1)), [finanziamenti]);
+
+  const widgets = [
+    { id:'gestisci', title:'Aggiungi Finanziamento/Mutuo', icon: Icons.Plus, accent:'text-indigo-500', render: (
+      <div className="p-4 flex flex-col gap-3">
+        <div>
+          <FieldLabel>Nome</FieldLabel>
+          <TextInput type="text" placeholder="es. Prestito Auto" value={nuovo.nome} onChange={(e)=>setNuovo(s=>({...s,nome:e.target.value}))} />
+        </div>
+        <div>
+          <FieldLabel>Tipo</FieldLabel>
+          <select value={nuovo.tipo} onChange={(e)=>setNuovo(s=>({...s,tipo:e.target.value}))}
+            className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white text-sm text-neutral-900 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-400">
+            <option value="finanziamento">Finanziamento</option>
+            <option value="mutuo">Mutuo</option>
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <FieldLabel>Debito Residuo (€)</FieldLabel>
+            <TextInput type="text" placeholder="es. 3500" value={nuovo.debitoResiduo} onChange={(e)=>setNuovo(s=>({...s,debitoResiduo:e.target.value}))} />
+          </div>
+          <div>
+            <FieldLabel>Rata Mensile (€)</FieldLabel>
+            <TextInput type="text" placeholder="es. 150" value={nuovo.rataMensile} onChange={(e)=>setNuovo(s=>({...s,rataMensile:e.target.value}))} />
+          </div>
+        </div>
+        <PrimaryBtn onClick={addItem} icon={Icons.Plus} className="w-full mt-1">Aggiungi</PrimaryBtn>
+        <p className="text-[10.5px] text-neutral-400 leading-relaxed pt-2 border-t border-neutral-100">
+          Disattiva una voce dall'elenco quando il finanziamento o il mutuo è stato completamente estinto: uscirà dal calcolo delle rate totali ma resterà in elenco come storico.
+        </p>
+      </div>
+    ) },
+    { id:'elenco', title:'Elenco Finanziamenti e Mutui', icon: Icons.Building2, accent:'text-indigo-500', render: (
+      ordinati.length === 0 ? <EmptyState icon={Icons.Building2} text="Nessun finanziamento o mutuo in elenco." /> : (
+      <div className="p-4 h-full overflow-auto -mx-1">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[10.5px] text-neutral-400 uppercase tracking-wide">
+              <th className="px-2 py-2 font-semibold">Nome</th>
+              <th className="px-2 py-2 font-semibold">Tipo</th>
+              <th className="px-2 py-2 font-semibold text-right">Debito Residuo</th>
+              <th className="px-2 py-2 font-semibold text-right">Rata Mensile</th>
+              <th className="px-2 py-2 font-semibold text-center">Stato</th>
+              <th className="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordinati.map(f => {
+              const meta = TIPO_FINANZIAMENTO_META[f.tipo] || TIPO_FINANZIAMENTO_META.finanziamento;
+              return (
+                <tr key={f.id} className={"border-t border-neutral-100 hover:bg-neutral-50 " + (!f.attivo ? "opacity-45" : "")}>
+                  <td className={"px-2 py-2 text-neutral-800 max-w-[160px] truncate " + (!f.attivo ? "line-through" : "")}>{f.nome}</td>
+                  <td className="px-2 py-2">
+                    <span className={"inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[11px] font-medium " + meta.badge}>
+                      <span className={"w-1.5 h-1.5 rounded-full " + meta.dot}></span>{meta.label}
+                    </span>
+                  </td>
+                  <td className="px-2 py-2 text-right whitespace-nowrap">
+                    <input type="number" value={f.debitoResiduo} onChange={(e)=>updateItem(f.id,{debitoResiduo:e.target.value===''?'':Number(e.target.value)})}
+                      className="w-24 text-right bg-transparent border-b border-transparent hover:border-neutral-200 focus:border-neutral-400 outline-none text-neutral-600" />
+                  </td>
+                  <td className="px-2 py-2 text-right whitespace-nowrap">
+                    <input type="number" value={f.rataMensile} onChange={(e)=>updateItem(f.id,{rataMensile:e.target.value===''?'':Number(e.target.value)})}
+                      className="w-20 text-right bg-transparent border-b border-transparent hover:border-neutral-200 focus:border-neutral-400 outline-none text-neutral-600" />
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <button onClick={() => toggleAttivo(f.id)}
+                      className={"px-2.5 py-1 rounded-full text-[10.5px] font-bold transition-colors " + (f.attivo ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-neutral-200 text-neutral-500 hover:bg-neutral-300")}>
+                      {f.attivo ? 'ATTIVO' : 'ESTINTO'}
+                    </button>
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    <button onClick={()=>removeItem(f.id)} className="text-neutral-300 hover:text-rose-500 transition-colors"><Icons.X size={14} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      )
+    ) },
+    { id:'riepilogo', title:'Riepilogo Rate', icon: Icons.Coins, accent:'text-indigo-500', render: <FinanziamentiRiepilogoWidget /> },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Finanziamenti e Mutui" subtitle="Stato attivo/estinto, rate mensili e riepilogo del debito" icon={Icons.Building2}
+        onReset={() => resetDashboard('finanziamenti')} resetLabel="Ripristinare l'elenco ai valori di base?" extra={<SaveProgressButton />} />
+      <GridCanvas dashKey="finanziamenti" widgets={widgets} />
+    </div>
+  );
+}
+
+/* ============================== AGENDA SPESE ============================== */
+
+const MAX_RICEVUTA_BYTES = 3 * 1024 * 1024;
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('Lettura file fallita'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function computeAgendaStats(agenda, period) {
+  const filtrati = agenda.filter(a => inPeriod(a.scadenza, period));
+  const totale = filtrati.reduce((s,a) => s + (Number(a.importo) || 0), 0);
+  const pagato = filtrati.filter(a => a.pagato).reduce((s,a) => s + (Number(a.importo) || 0), 0);
+  const daPagare = Math.max(0, totale - pagato);
+  return { filtrati, totale, pagato, daPagare, count: filtrati.length, countPagati: filtrati.filter(a=>a.pagato).length };
+}
+
+function AgendaSummaryCard() {
+  const { agenda, period } = useApp();
+  const { totale, pagato, daPagare, count } = computeAgendaStats(agenda, period);
+  const label = period.mese === null ? `Anno ${period.anno}` : `${MESI[period.mese-1]} ${period.anno}`;
+  return (
+    <div className="h-full flex flex-col justify-between p-4">
+      <div className="flex items-center justify-between">
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-sky-100 text-sky-600">
+          <Icons.Calendar size={16} />
+        </div>
+        <span className="text-[10.5px] font-semibold text-neutral-400">{count} voci · {label}</span>
+      </div>
+      <div>
+        <p className="text-2xl font-bold text-neutral-900 tracking-tight">{fmtEUR(daPagare)}</p>
+        <p className="text-xs text-neutral-500 mt-1">Da pagare in agenda</p>
+        <p className="text-[11px] text-neutral-400 mt-0.5">Totale {fmtEUR(totale)} · Già pagato {fmtEUR(pagato)}</p>
+      </div>
+    </div>
+  );
+}
+
+function AgendaRiepilogoWidget() {
+  const { agenda, period } = useApp();
+  const { totale, pagato, daPagare, count, countPagati } = computeAgendaStats(agenda, period);
+  const label = period.mese === null ? `tutto il ${period.anno}` : `${MESI[period.mese-1]} ${period.anno}`;
+  const pct = totale > 0 ? Math.min(100, (pagato/totale)*100) : 0;
+  return (
+    <div className="p-5 h-full">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="bg-neutral-50 rounded-xl p-4">
+          <p className="text-[11px] text-neutral-400 mb-1">Totale Agenda ({label})</p>
+          <p className="text-lg font-bold text-neutral-900">{fmtEUR(totale)}</p>
+          <p className="text-[10.5px] text-neutral-400 mt-1">{count} voci · {countPagati} pagate</p>
+        </div>
+        <div className="bg-emerald-50 rounded-xl p-4">
+          <p className="text-[11px] text-emerald-600 mb-1">Già Pagato</p>
+          <p className="text-lg font-bold text-emerald-700">{fmtEUR(pagato)}</p>
+        </div>
+        <div className="bg-rose-50 rounded-xl p-4">
+          <p className="text-[11px] text-rose-600 mb-1">Da Pagare</p>
+          <p className="text-lg font-bold text-rose-700">{fmtEUR(daPagare)}</p>
+        </div>
+      </div>
+      <div className="w-full h-2.5 rounded-full bg-neutral-100 overflow-hidden">
+        <div className="h-full rounded-full bg-emerald-400 transition-all" style={{ width: `${Math.max(pct>0?3:0, pct)}%` }}></div>
+      </div>
+    </div>
+  );
+}
+
+function AgendaDashboard() {
+  const { agenda, setAgenda, period, setPeriod, resetDashboard, pushToast } = useApp();
+  const [nuovo, setNuovo] = useState({ nome:'', importo:'', scadenza:'' });
+
+  const addItem = () => {
+    const importo = parseImporto(nuovo.importo);
+    if (!nuovo.nome.trim() || importo === null || !nuovo.scadenza) { pushToast('Compila nome, importo e scadenza.', 'warn'); return; }
+    setAgenda(prev => [mkAgendaItem(nuovo.nome.trim(), importo, nuovo.scadenza), ...prev]);
+    setNuovo({ nome:'', importo:'', scadenza:'' });
+    pushToast('Voce aggiunta in agenda');
+  };
+  const updateItem = (id, patch) => setAgenda(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a));
+  const togglePagato = (id) => updateItem(id, { pagato: !agenda.find(a=>a.id===id)?.pagato });
+  const removeItem = (id) => {
+    const removed = agenda.find(a => a.id === id);
+    setAgenda(prev => prev.filter(a => a.id !== id));
+    if (removed) pushToast('Voce rimossa', 'warn', { label: 'Annulla', onClick: () => setAgenda(prev => [removed, ...prev]) });
+  };
+  const attachReceipt = async (id, file) => {
+    if (!file) return;
+    if (file.size > MAX_RICEVUTA_BYTES) { pushToast(`File troppo grande (max ${(MAX_RICEVUTA_BYTES/1024/1024).toFixed(0)}MB). Scegline uno più leggero.`, 'error'); return; }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      updateItem(id, { ricevuta: { name: file.name, type: file.type, dataUrl } });
+      pushToast('Ricevuta allegata');
+    } catch (e) {
+      pushToast('Impossibile leggere il file.', 'error');
+    }
+  };
+  const viewReceipt = (ricevuta) => {
+    const w = window.open();
+    if (!w) { pushToast('Il browser ha bloccato l\'apertura della ricevuta (popup).', 'warn'); return; }
+    if (ricevuta.type && ricevuta.type.startsWith('image/')) {
+      w.document.write(`<title>${ricevuta.name}</title><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh;"><img src="${ricevuta.dataUrl}" style="max-width:100%;max-height:100vh;"/></body>`);
+    } else {
+      w.location.href = ricevuta.dataUrl;
+    }
+  };
+
+  const { filtrati } = computeAgendaStats(agenda, period);
+  const ordinati = useMemo(() => [...filtrati].sort((a,b) => a.scadenza.localeCompare(b.scadenza)), [filtrati]);
+
+  const widgets = [
+    { id:'aggiungi', title:'Aggiungi Spesa Futura', icon: Icons.Plus, accent:'text-sky-500', render: (
+      <div className="p-4 flex flex-col gap-3">
+        <div>
+          <FieldLabel>Nome</FieldLabel>
+          <TextInput type="text" placeholder="es. Assicurazione Scuola" value={nuovo.nome} onChange={(e)=>setNuovo(s=>({...s,nome:e.target.value}))} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <FieldLabel>Importo (€)</FieldLabel>
+            <TextInput type="text" placeholder="es. 120" value={nuovo.importo} onChange={(e)=>setNuovo(s=>({...s,importo:e.target.value}))} />
+          </div>
+          <div>
+            <FieldLabel>Scadenza</FieldLabel>
+            <TextInput type="date" value={nuovo.scadenza} onChange={(e)=>setNuovo(s=>({...s,scadenza:e.target.value}))} />
+          </div>
+        </div>
+        <PrimaryBtn onClick={addItem} icon={Icons.Plus} className="w-full mt-1">Aggiungi</PrimaryBtn>
+        <p className="text-[10.5px] text-neutral-400 leading-relaxed pt-2 border-t border-neutral-100">
+          L'elenco a destra e il riepilogo qui sotto seguono il Filtro Periodo della sidebar: seleziona un mese per vedere solo le spese in scadenza in quel mese.
+        </p>
+      </div>
+    ) },
+    { id:'elenco', title:'Elenco Spese in Agenda', icon: Icons.Calendar, accent:'text-sky-500', render: (
+      <div className="p-4 h-full flex flex-col overflow-hidden">
+        <div className="flex items-center gap-2 mb-3 shrink-0">
+          <select value={period.mese === null ? 'tutti' : period.mese}
+            onChange={(e) => setPeriod(p => ({ ...p, mese: e.target.value === 'tutti' ? null : Number(e.target.value) }))}
+            className="text-xs font-medium bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-2 text-neutral-700 focus:outline-none focus:ring-2 focus:ring-neutral-900/10">
+            <option value="tutti">Tutti i mesi</option>
+            {MESI.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+          </select>
+          <select value={period.anno}
+            onChange={(e) => setPeriod(p => ({ ...p, anno: Number(e.target.value) }))}
+            className="text-xs font-medium bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-2 text-neutral-700 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 w-20">
+            {ANNI.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        {ordinati.length === 0 ? <EmptyState icon={Icons.Calendar} text="Nessuna spesa in agenda per il periodo selezionato." /> : (
+      <div className="flex-1 overflow-auto -mx-1">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[10.5px] text-neutral-400 uppercase tracking-wide">
+              <th className="px-2 py-2 font-semibold">Nome</th>
+              <th className="px-2 py-2 font-semibold">Scadenza</th>
+              <th className="px-2 py-2 font-semibold text-right">Importo</th>
+              <th className="px-2 py-2 font-semibold">Note</th>
+              <th className="px-2 py-2 font-semibold text-center">Ricevuta</th>
+              <th className="px-2 py-2 font-semibold text-center">Stato</th>
+              <th className="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordinati.map(a => (
+              <tr key={a.id} className={"border-t border-neutral-100 hover:bg-neutral-50 " + (a.pagato ? "opacity-60" : "")}>
+                <td className={"px-2 py-2 text-neutral-800 max-w-[150px] truncate " + (a.pagato ? "line-through" : "")}>{a.nome}</td>
+                <td className="px-2 py-2 text-neutral-500 text-xs whitespace-nowrap">{a.scadenza}</td>
+                <td className="px-2 py-2 text-right font-semibold text-neutral-800 whitespace-nowrap">{fmtEUR(a.importo)}</td>
+                <td className="px-2 py-2 min-w-[140px]">
+                  <input type="text" value={a.note} placeholder="cosa ho pagato..." onChange={(e)=>updateItem(a.id,{note:e.target.value})}
+                    className="w-full bg-transparent border-b border-transparent hover:border-neutral-200 focus:border-neutral-400 outline-none text-xs text-neutral-600 placeholder-neutral-300" />
+                </td>
+                <td className="px-2 py-2 text-center">
+                  {a.ricevuta ? (
+                    <div className="flex items-center justify-center gap-1">
+                      <button onClick={()=>viewReceipt(a.ricevuta)} title={a.ricevuta.name} className="text-emerald-600 hover:text-emerald-800"><Icons.FileCheck2 size={15} /></button>
+                      <button onClick={()=>updateItem(a.id,{ricevuta:null})} title="Rimuovi ricevuta" className="text-neutral-300 hover:text-rose-500"><Icons.X size={12} /></button>
+                    </div>
+                  ) : (
+                    <label className="inline-flex items-center justify-center cursor-pointer text-neutral-300 hover:text-sky-600" title="Allega ricevuta">
+                      <Icons.Paperclip size={15} />
+                      <input type="file" accept="image/*,.pdf" className="hidden" onChange={(e)=>{ attachReceipt(a.id, e.target.files[0]); e.target.value=''; }} />
+                    </label>
+                  )}
+                </td>
+                <td className="px-2 py-2 text-center">
+                  <button onClick={()=>togglePagato(a.id)}
+                    className={"px-2.5 py-1 rounded-full text-[10.5px] font-bold transition-colors whitespace-nowrap " + (a.pagato ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-amber-100 text-amber-700 hover:bg-amber-200")}>
+                    {a.pagato ? 'PAGATO' : 'DA PAGARE'}
+                  </button>
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <button onClick={()=>removeItem(a.id)} className="text-neutral-300 hover:text-rose-500 transition-colors"><Icons.X size={14} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      )}
+      </div>
+    ) },
+    { id:'riepilogo', title:'Riepilogo Agenda', icon: Icons.Coins, accent:'text-sky-500', render: <AgendaRiepilogoWidget /> },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Agenda Spese" subtitle="Spese future, stato pagamenti e ricevute archiviate" icon={Icons.Calendar}
+        onReset={() => resetDashboard('agenda')} resetLabel="Svuotare l'agenda spese?" extra={<SaveProgressButton />} />
+      <GridCanvas dashKey="agenda" widgets={widgets} />
+    </div>
+  );
+}
+
+function RiepilogoDashboard() {
+  const { period, incomes, extraEntrate, movements, investments, pensione, resetDashboard } = useApp();
+
+  const entrateTot = useMemo(() => {
+    const base = Object.values(incomes).reduce((s,v) => s + (Number(v)||0), 0)
+      + extraEntrate.reduce((s,e) => s + (Number(e.importo)||0), 0);
+    return period.mese === null ? base * 12 : base;
+  }, [incomes, extraEntrate, period]);
+
+  const movFiltered = useMemo(() => movements.filter(m => inPeriod(m.data, period)), [movements, period]);
+  const uscite = useMemo(() => movFiltered.filter(m => EXPENSE_CATS.includes(m.categoria) && m.importo < 0).reduce((s,m) => s + Math.abs(m.importo), 0), [movFiltered]);
+  const cartaTot = useMemo(() => movFiltered.filter(m => m.categoria === 'carta').reduce((s,m) => s + Math.abs(m.importo), 0), [movFiltered]);
+  const revolutTot = useMemo(() => movFiltered.filter(m => m.categoria === 'revolut').reduce((s,m) => s + Math.abs(m.importo), 0), [movFiltered]);
+
+  const massValore = useMemo(() => investments.massimiliano.reduce((s,h) => s + h.quantita*h.prezzoCorrente, 0), [investments.massimiliano]);
+  const massCosto = useMemo(() => investments.massimiliano.reduce((s,h) => s + h.quantita*h.pma, 0), [investments.massimiliano]);
+  const massPL = massValore - massCosto;
+  const massPLpct = massCosto > 0 ? (massPL/massCosto)*100 : 0;
+
+  const pensioneProiezione = useMemo(() => buildProiezionePensione(Number(pensione.importoMensile)||0, Number(pensione.anniInvestimento)||0), [pensione]);
+  const pensioneFinale = pensioneProiezione.length ? pensioneProiezione[pensioneProiezione.length-1].capitale : 0;
+
+  const salvadanaio = entrateTot - uscite;
+  const positivo = salvadanaio >= 0;
+
+  const widgets = [
+    { id:'entrate', title:'Entrate', icon: Icons.Wallet, accent:'text-emerald-500', render: <StatCard icon={Icons.Wallet} tone="green" value={fmtEUR(entrateTot)} label="Entrate del periodo" sub={period.mese===null ? 'Somma annua stimata' : 'Stipendi + INPS'} /> },
+    { id:'uscite', title:'Uscite', icon: Icons.TrendingDown, accent:'text-rose-500', render: <StatCard icon={Icons.TrendingDown} tone="red" value={fmtEUR(uscite)} label="Spese reali (esclusi investimenti)" sub={`${movFiltered.filter(m=>EXPENSE_CATS.includes(m.categoria)).length} movimenti`} /> },
+    { id:'investimenti', title:'Andamento Investimenti', icon: Icons.TrendingUp, accent:'text-violet-500', render: <StatCard icon={Icons.TrendingUp} tone="violet" value={fmtEUR(massValore)} label="Valore di mercato (Fineco + Lombard)" sub={`P&L ${fmtEUR(massPL)}`} trend={massPLpct} /> },
+    { id:'carta', title:'Carta di Credito', icon: Icons.CreditCard, accent:'text-rose-500', render: <StatCard icon={Icons.CreditCard} tone="red" value={fmtEUR(cartaTot)} label="Addebiti carta del mese" /> },
+    { id:'revolut', title:'Flussi Revolut', icon: Icons.RefreshCw, accent:'text-indigo-500', render: <StatCard icon={Icons.RefreshCw} tone="indigo" value={fmtEUR(revolutTot)} label="Giroconti verso Revolut" sub="Alimenti & Ludico" /> },
+    { id:'pensione', title:'Pensione Futura', icon: Icons.ShieldCheck, accent:'text-amber-500', render: <StatCard icon={Icons.ShieldCheck} tone="amber" value={fmtEUR(pensioneFinale)} label="Valore finale fondo stimato" sub={`${pensione.anniInvestimento} anni al 4%`} /> },
+    { id:'salvadanaio', title:'Salvadanaio', icon: Icons.PiggyBank, accent: positivo ? 'text-emerald-500' : 'text-rose-500', render: (
+      <div className="h-full flex flex-col justify-between p-4">
+        <div className="flex items-center justify-between">
+          <div className={"w-8 h-8 rounded-xl flex items-center justify-center " + (positivo ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600")}>
+            <Icons.PiggyBank size={16} />
+          </div>
+          <span className={"px-2.5 py-1 rounded-full text-[11px] font-bold " + (positivo ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700")}>
+            {positivo ? 'IN POSITIVO' : 'ATTENZIONE'}
+          </span>
+        </div>
+        <div>
+          <p className={"text-2xl font-bold tracking-tight " + (positivo ? "text-emerald-600" : "text-rose-600")}>{fmtEUR(salvadanaio)}</p>
+          <p className="text-xs text-neutral-500 mt-1">Entrate − Uscite del periodo</p>
+          {!positivo && <p className="text-[11px] text-rose-500 mt-1 flex items-center gap-1"><Icons.AlertTriangle size={11}/> Le uscite superano le entrate</p>}
+        </div>
+      </div>
+    ) },
+    { id:'fido', title:'Fido da Recuperare', icon: Icons.Landmark, accent:'text-amber-500', render: <FidoSummaryCard /> },
+    { id:'finanziamenti', title:'Finanziamenti e Mutui', icon: Icons.Building2, accent:'text-indigo-500', render: <FinanziamentiSummaryCard /> },
+    { id:'agenda', title:'Spese in Agenda', icon: Icons.Calendar, accent:'text-sky-500', render: <AgendaSummaryCard /> },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Riepilogo" subtitle="Vista d'insieme in tempo reale su tutte le dashboard" icon={Icons.LayoutDashboard}
+        onReset={() => resetDashboard('riepilogo')} resetLabel="Ripristina il layout di default" extra={<SaveProgressButton />} />
+      <GridCanvas dashKey="riepilogo" widgets={widgets} />
+    </div>
+  );
+}
+
+/* ============================== ENTRATE ============================== */
+
+const EXTRA_INCOME_COLORS = ['#ec4899', '#14b8a6', '#f97316', '#8b5cf6', '#22c55e', '#eab308', '#06b6d4', '#f43f5e'];
+
+function EntrateDashboard() {
+  const { incomes, setIncomes, extraEntrate, setExtraEntrate, resetDashboard, pushToast } = useApp();
+  const [newExtra, setNewExtra] = useState({ nome: '', importo: '' });
+  const colors = { massimiliano:'#4f46e5', susj:'#0ea5e9', inps:'#10b981', mamma:'#f59e0b' };
+
+  const donutData = [
+    ...Object.keys(incomes).map(k => ({ label: INCOME_LABELS[k], value: Number(incomes[k])||0, color: colors[k] })),
+    ...extraEntrate.map((e,i) => ({ label: e.nome || 'Altra entrata', value: Number(e.importo)||0, color: EXTRA_INCOME_COLORS[i % EXTRA_INCOME_COLORS.length] })),
+  ];
+  const baseTot = Object.values(incomes).reduce((s,v)=>s+(Number(v)||0),0);
+  const extraTot = extraEntrate.reduce((s,e)=>s+(Number(e.importo)||0),0);
+
+  const addExtra = () => {
+    const importo = parseImporto(newExtra.importo);
+    if (!newExtra.nome.trim() || importo === null) { pushToast('Inserisci nome e importo della voce.', 'warn'); return; }
+    setExtraEntrate(prev => [...prev, { id: uid(), nome: newExtra.nome.trim(), importo }]);
+    setNewExtra({ nome: '', importo: '' });
+  };
+  const removeExtra = (id) => setExtraEntrate(prev => prev.filter(e => e.id !== id));
+  const updateExtra = (id, patch) => setExtraEntrate(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));
+
+  const widgets = [
+    { id:'form', title:'Entrate Fisse Mensili', icon: Icons.Wallet, accent:'text-emerald-500', render: (
+      <div className="p-5 flex flex-col gap-4">
+        {Object.keys(incomes).map(k => (
+          <div key={k}>
+            <FieldLabel>{INCOME_LABELS[k]}</FieldLabel>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400 text-sm">€</span>
+              <TextInput type="number" step="0.01" value={incomes[k]}
+                onChange={(e) => setIncomes(prev => ({ ...prev, [k]: e.target.value === '' ? '' : Number(e.target.value) }))}
+                className="pl-7" />
+            </div>
+          </div>
+        ))}
+        <div className="pt-1 flex items-center justify-between text-xs text-neutral-400">
+          <span>Totale voci fisse</span><span className="font-semibold text-neutral-600">{fmtEUR(baseTot)}</span>
+        </div>
+
+        <div className="pt-3 border-t border-neutral-100">
+          <FieldLabel>Altre Entrate (manuale)</FieldLabel>
+          {extraEntrate.length === 0 ? (
+            <p className="text-[11px] text-neutral-400 mb-2">Nessuna voce aggiuntiva. Usa il form sotto per registrarne una futura (es. affitto, consulenza, bonus).</p>
+          ) : (
+            <div className="flex flex-col gap-2 mb-3">
+              {extraEntrate.map(e => (
+                <div key={e.id} className="flex items-center gap-2">
+                  <TextInput type="text" value={e.nome} onChange={(ev)=>updateExtra(e.id,{nome:ev.target.value})} className="flex-1" placeholder="Nome voce" />
+                  <div className="relative w-28 shrink-0">
+                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">€</span>
+                    <TextInput type="number" step="0.01" value={e.importo} onChange={(ev)=>updateExtra(e.id,{importo: ev.target.value===''?'':Number(ev.target.value)})} className="pl-6" />
+                  </div>
+                  <button onClick={()=>removeExtra(e.id)} className="text-neutral-300 hover:text-rose-500 transition-colors shrink-0"><Icons.X size={15} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <TextInput type="text" placeholder="Nuova voce (es. Affitto)" value={newExtra.nome} onChange={(e)=>setNewExtra(s=>({...s,nome:e.target.value}))} className="flex-1" />
+            <div className="relative w-28 shrink-0">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400 text-xs">€</span>
+              <TextInput type="text" placeholder="0,00" value={newExtra.importo} onChange={(e)=>setNewExtra(s=>({...s,importo:e.target.value}))} className="pl-6" />
+            </div>
+          </div>
+          <PrimaryBtn onClick={addExtra} icon={Icons.Plus} className="w-full mt-2">Aggiungi voce</PrimaryBtn>
+        </div>
+
+        <div className="mt-1 pt-3 border-t border-neutral-100 flex items-center justify-between">
+          <span className="text-sm font-semibold text-neutral-700">Totale mensile</span>
+          <span className="text-lg font-bold text-neutral-900">{fmtEUR(baseTot + extraTot)}</span>
+        </div>
+      </div>
+    ) },
+    { id:'donut', title:'Ripartizione Entrate', icon: Icons.PieChart, accent:'text-indigo-500', render: (
+      <div className="p-4 h-full"><DonutChart data={donutData} /></div>
+    ) },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Entrate" subtitle="Stipendi fissi mensili della famiglia e altre entrate" icon={Icons.Wallet}
+        onReset={() => resetDashboard('entrate')} resetLabel="Ripristina i valori di base?" extra={<SaveProgressButton />} />
+      <GridCanvas dashKey="entrate" widgets={widgets} />
+    </div>
+  );
+}
+
+/* ============================== MOVIMENTI ============================== */
+
+const FINECO_HEADER_ALIASES = {
+  dataOperazione: ['data_operazione', 'data operazione'],
+  dataValuta: ['data_valuta', 'data valuta'],
+  entrate: ['entrate'],
+  uscite: ['uscite'],
+  descrizione: ['descrizione'],
+  descrizioneCompleta: ['descrizione_completa', 'descrizione completa'],
+  stato: ['stato'],
+  moneymap: ['moneymap', 'money map', 'categoria'],
+};
+function normHeaderCell(s) {
+  return String(s || '').toLowerCase().trim().replace(/[_\s]+/g, ' ');
+}
+function detectFinecoHeaderRow(rows) {
+  const limit = Math.min(rows.length, 30);
+  for (let i = 0; i < limit; i++) {
+    const row = rows[i] || [];
+    const norm = row.map(normHeaderCell);
+    const idxOf = (aliases) => norm.findIndex(c => aliases.includes(c));
+    const descIdx = idxOf(FINECO_HEADER_ALIASES.descrizione);
+    const usciteIdx = idxOf(FINECO_HEADER_ALIASES.uscite);
+    if (descIdx !== -1 && usciteIdx !== -1) {
+      return {
+        rowIndex: i,
+        dataOperazione: idxOf(FINECO_HEADER_ALIASES.dataOperazione),
+        dataValuta: idxOf(FINECO_HEADER_ALIASES.dataValuta),
+        entrate: idxOf(FINECO_HEADER_ALIASES.entrate),
+        uscite: usciteIdx,
+        descrizione: descIdx,
+        descrizioneCompleta: idxOf(FINECO_HEADER_ALIASES.descrizioneCompleta),
+        stato: idxOf(FINECO_HEADER_ALIASES.stato),
+        moneymap: idxOf(FINECO_HEADER_ALIASES.moneymap),
+      };
+    }
+  }
+  return null;
+}
+function parseFinecoRows(rows, map) {
+  const out = [];
+  const get = (row, idx) => (idx === -1 || idx === undefined) ? undefined : row[idx];
+  for (let i = map.rowIndex + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+    const nEntrate = parseImporto(get(row, map.entrate));
+    const nUscite = parseImporto(get(row, map.uscite));
+    if (nEntrate === null && nUscite === null) continue;
+    const importo = (nEntrate !== null && nEntrate !== 0) ? Math.abs(nEntrate) : (nUscite !== null ? -Math.abs(nUscite) : null);
+    if (importo === null) continue;
+    const dataISO = anyDateLikeToISO(get(row, map.dataOperazione)) || anyDateLikeToISO(get(row, map.dataValuta));
+    if (!dataISO) continue;
+    const descBase = String(get(row, map.descrizione) || '').trim();
+    const descFull = String(get(row, map.descrizioneCompleta) || '').trim();
+    const moneymap = String(get(row, map.moneymap) || '').trim().toLowerCase();
+    const combined = (descBase + ' ' + descFull).toLowerCase();
+    let categoria;
+    if (/revolut/.test(combined)) categoria = 'revolut';
+    else if (/compravendita titoli|dossier titoli|riten\.?\s*etf|ritenuta su cedole|riten\.?\s*divid/.test(combined)) categoria = 'investimento';
+    else if (/carta di credito|carta credito|utilizzo carta/.test(combined)) categoria = 'carta';
+    else if (MONEYMAP_TO_CAT[moneymap]) categoria = MONEYMAP_TO_CAT[moneymap];
+    else categoria = categorizza(combined);
+    const descrizioneFinale = (descFull && descFull.length > 2 ? descFull : (descBase || 'Movimento')).slice(0, 160);
+    out.push({ id: uid(), data: dataISO, descrizione: descrizioneFinale, importo, categoria });
+  }
+  return out;
+}
+function parseRowsToMovimentiGeneric(rows) {
+  const out = [];
+  for (const row of rows) {
+    const cells = Array.isArray(row) ? row : Object.values(row);
+    if (!cells || cells.length === 0) continue;
+    let data = null, importo = null, descParts = [];
+    for (const c of cells) {
+      if (data === null) { const d = anyDateLikeToISO(c); if (d) { data = d; continue; } }
+    }
+    for (let i = cells.length - 1; i >= 0; i--) {
+      const n = parseImporto(cells[i]);
+      if (n !== null && importo === null) { importo = n; continue; }
+      if (cells[i] !== null && cells[i] !== undefined && String(cells[i]).trim() !== '') descParts.push(String(cells[i]).trim());
+    }
+    if (data === null || importo === null) continue;
+    const descrizione = descParts.reverse().join(' ').trim() || 'Movimento';
+    out.push({ id: uid(), data, descrizione, importo, categoria: categorizza(descrizione) });
+  }
+  return out;
+}
+function parseRowsToMovimenti(rows) {
+  const finecoMap = detectFinecoHeaderRow(rows);
+  if (finecoMap) {
+    const parsed = parseFinecoRows(rows, finecoMap);
+    if (parsed.length > 0) return parsed;
+  }
+  return parseRowsToMovimentiGeneric(rows);
+}
+function parsePastedText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const rows = lines.map(l => l.split(/;|\t|,(?=[^,]*$)/).map(s => s.trim()));
+  return parseRowsToMovimenti(rows);
+}
+
+function Dropzone({ onFilesRows, onMockFile, mockKind, label, sub, icon: Icon }) {
+  const [over, setOver] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const handleRealFile = (file) => {
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target.result);
+        const wb = XLSX.read(data, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+        onFilesRows(rows, file.name);
+      } catch (err) {
+        onFilesRows([], file.name, true);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setOver(false);
+    const internalId = e.dataTransfer.getData('application/x-estrazione-id');
+    if (internalId) { onMockFile(internalId); return; }
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) handleRealFile(file);
+  };
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={handleDrop}
+      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+      className={"cursor-pointer border-2 border-dashed rounded-xl px-4 py-6 flex flex-col items-center justify-center text-center gap-1.5 transition-colors " +
+        (over ? "border-neutral-900 bg-neutral-50" : "border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50/60")}>
+      <Icon size={20} className="text-neutral-400 mb-1" />
+      <p className="text-xs font-semibold text-neutral-700">{label}</p>
+      {sub && <p className="text-[10.5px] text-neutral-400">{sub}</p>}
+      <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+        onChange={(e) => { const f = e.target.files[0]; if (f) handleRealFile(f); e.target.value=''; }} />
+    </div>
+  );
+}
+
+function MovimentiDashboard() {
+  const { movements, setMovements, resetDashboard, pushToast, period, setPeriod, estrazioniBackups, setEstrazioniBackups } = useApp();
+  const [pasteText, setPasteText] = useState('');
+  const [search, setSearch] = useState('');
+  const [filterCat, setFilterCat] = useState('tutte');
+  const [manual, setManual] = useState({ data:'', descrizione:'', importo:'' });
+
+  const mergeDedup = (parsed, sourceLabel, emptyMsg) => {
+    if (parsed.length === 0) { pushToast(emptyMsg, 'warn'); return; }
+    let addedCount = 0, dupCount = 0;
+    setMovements(prev => {
+      const existingKeys = new Set(prev.map(movementKey));
+      const fresh = [];
+      for (const m of parsed) {
+        const k = movementKey(m);
+        if (existingKeys.has(k)) { dupCount++; continue; }
+        existingKeys.add(k);
+        fresh.push(m);
+      }
+      addedCount = fresh.length;
+      return fresh.length > 0 ? [...fresh, ...prev] : prev;
+    });
+    if (addedCount === 0) {
+      pushToast(`Nessun movimento nuovo: tutte le ${dupCount} righe di ${sourceLabel} erano già presenti.`, 'warn');
+    } else if (dupCount > 0) {
+      pushToast(`${addedCount} nuovi movimenti importati da ${sourceLabel} (${dupCount} già presenti, ignorati)`);
+    } else {
+      pushToast(`${addedCount} movimenti importati da ${sourceLabel}`);
+    }
+  };
+  const onFilesRows = (rows, filename, error) => {
+    if (error) { pushToast('Non riesco a leggere ' + filename + '.', 'error'); return; }
+    const parsed = parseRowsToMovimenti(rows);
+    mergeDedup(parsed, filename, 'Nessun movimento riconosciuto in ' + filename + '. Aggiungilo manualmente.');
+  };
+  const onMockFile = (fileId) => {
+    const backup = estrazioniBackups.find(b => b.id === fileId);
+    if (backup) {
+      const parsed = backup.movimenti.map(m => ({ ...m, id: uid() }));
+      mergeDedup(parsed, backup.name, 'Questo backup non contiene movimenti.');
+      return;
+    }
+    const meta = ESTRAZIONI_FILES.find(f => f.id === fileId);
+    if (!meta || meta.kind !== 'movimenti') { pushToast('Questo file non contiene movimenti bancari.', 'warn'); return; }
+    const rows = mockMovimenti(fileId);
+    const parsed = parseRowsToMovimenti(rows);
+    mergeDedup(parsed, meta.name, 'Nessun movimento riconosciuto in ' + meta.name + '.');
+  };
+  const salvaBackup = () => {
+    if (movements.length === 0) { pushToast('Nessun movimento da salvare.', 'warn'); return; }
+    const backup = makeMovimentiBackup(movements);
+    setEstrazioniBackups(prev => [backup, ...prev].slice(0, 10));
+    pushToast(`Backup di ${movements.length} movimenti salvato in Cartella Estrazioni`);
+  };
+  const handlePasteImport = () => {
+    const parsed = parsePastedText(pasteText);
+    if (parsed.length > 0) setPasteText('');
+    mergeDedup(parsed, 'testo incollato', 'Nessuna riga valida trovata. Formato: data;descrizione;importo');
+  };
+  const handleManualAdd = () => {
+    const data = parseData(manual.data) || manual.data;
+    const importo = parseImporto(manual.importo);
+    if (!data || !manual.descrizione || importo === null) { pushToast('Compila data, descrizione e importo.', 'warn'); return; }
+    setMovements(prev => [{ id: uid(), data, descrizione: manual.descrizione, importo, categoria: categorizza(manual.descrizione) }, ...prev]);
+    setManual({ data:'', descrizione:'', importo:'' });
+    pushToast('Movimento aggiunto');
+  };
+  const removeMovement = (id) => {
+    const removed = movements.find(m => m.id === id);
+    setMovements(prev => prev.filter(m => m.id !== id));
+    if (removed) {
+      pushToast('Movimento eliminato', 'warn', { label: 'Annulla', onClick: () => setMovements(prev => [removed, ...prev]) });
+    }
+  };
+
+  const inPeriodMovements = useMemo(() => movements.filter(m => inPeriod(m.data, period)), [movements, period]);
+
+  const filtered = useMemo(() => inPeriodMovements
+    .filter(m => filterCat === 'tutte' || m.categoria === filterCat)
+    .filter(m => m.descrizione.toLowerCase().includes(search.toLowerCase()))
+    .sort((a,b) => b.data.localeCompare(a.data)), [inPeriodMovements, filterCat, search]);
+
+  const catCounts = useMemo(() => {
+    const c = {};
+    inPeriodMovements.forEach(m => { c[m.categoria] = (c[m.categoria]||0) + 1; });
+    return c;
+  }, [inPeriodMovements]);
+
+  const catBreakdown = useMemo(() => {
+    const totals = {};
+    inPeriodMovements.forEach(m => { totals[m.categoria] = (totals[m.categoria] || 0) + Math.abs(m.importo); });
+    return Object.keys(CATEGORY_META)
+      .map(cat => ({ cat, total: totals[cat] || 0, count: catCounts[cat] || 0 }))
+      .filter(x => x.count > 0)
+      .sort((a,b) => b.total - a.total);
+  }, [inPeriodMovements, catCounts]);
+  const maxCatTotal = Math.max(1, ...catBreakdown.map(x => x.total));
+
+  const widgets = [
+    { id:'carica', title:'Carica Movimenti', icon: Icons.Upload, accent:'text-sky-500', render: (
+      <div className="p-4 flex flex-col gap-4">
+        <GhostBtn icon={Icons.Archive} onClick={salvaBackup} className="w-full justify-center">Salva backup movimenti attuali</GhostBtn>
+        <Dropzone icon={Icons.FileSpreadsheet} label="Trascina un estratto conto" sub="CSV / XLSX o file dalla Cartella Estrazioni" onFilesRows={onFilesRows} onMockFile={onMockFile} />
+        <div>
+          <FieldLabel>Incolla righe (data;descrizione;importo)</FieldLabel>
+          <textarea value={pasteText} onChange={(e)=>setPasteText(e.target.value)} rows={4}
+            placeholder={"05/01/2026;PAGAMENTO POS CONAD;-84,30\n07/01/2026;Bonifico Fineco a Revolut;-500"}
+            className="w-full px-3 py-2 rounded-lg border border-neutral-200 bg-white text-xs font-mono placeholder-neutral-300 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 focus:border-neutral-400" />
+          <PrimaryBtn onClick={handlePasteImport} icon={Icons.Plus} className="w-full mt-2">Analizza e importa</PrimaryBtn>
+        </div>
+        <div className="pt-3 border-t border-neutral-100">
+          <FieldLabel>Aggiungi manualmente</FieldLabel>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <TextInput type="date" value={manual.data} onChange={(e)=>setManual(m=>({...m,data:e.target.value}))} />
+            <TextInput type="text" placeholder="Importo (es. -45,90)" value={manual.importo} onChange={(e)=>setManual(m=>({...m,importo:e.target.value}))} />
+          </div>
+          <TextInput type="text" placeholder="Descrizione" value={manual.descrizione} onChange={(e)=>setManual(m=>({...m,descrizione:e.target.value}))} className="mb-2" />
+          <PrimaryBtn onClick={handleManualAdd} icon={Icons.Plus} className="w-full">Aggiungi movimento</PrimaryBtn>
+        </div>
+      </div>
+    ) },
+    { id:'tabella', title:'Movimenti & Riconciliazione', icon: Icons.ArrowLeftRight, accent:'text-neutral-500', render: (
+      <div className="p-4 h-full flex flex-col">
+        <div className="flex items-center gap-2 mb-3">
+          <div className="relative flex-1">
+            <Icons.Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-400" />
+            <TextInput type="text" placeholder="Cerca movimento..." value={search} onChange={(e)=>setSearch(e.target.value)} className="pl-8" />
+          </div>
+          <select value={period.mese === null ? 'tutti' : period.mese}
+            onChange={(e) => setPeriod(p => ({ ...p, mese: e.target.value === 'tutti' ? null : Number(e.target.value) }))}
+            className="text-xs font-medium bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-2 text-neutral-700 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 shrink-0">
+            <option value="tutti">Tutti i mesi</option>
+            {MESI.map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+          </select>
+          <select value={period.anno}
+            onChange={(e) => setPeriod(p => ({ ...p, anno: Number(e.target.value) }))}
+            className="text-xs font-medium bg-neutral-50 border border-neutral-200 rounded-lg px-2 py-2 text-neutral-700 focus:outline-none focus:ring-2 focus:ring-neutral-900/10 shrink-0 w-20">
+            {ANNI.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          <GhostBtn active={filterCat==='tutte'} onClick={()=>setFilterCat('tutte')}>Tutte ({inPeriodMovements.length})</GhostBtn>
+          {Object.keys(CATEGORY_META).map(cat => catCounts[cat] ? (
+            <GhostBtn key={cat} active={filterCat===cat} onClick={()=>setFilterCat(cat)}>{CATEGORY_META[cat].label} ({catCounts[cat]})</GhostBtn>
+          ) : null)}
+        </div>
+        {filtered.length === 0 ? (
+          <EmptyState icon={Icons.Inbox} text={inPeriodMovements.length === 0 && movements.length > 0 ? "Nessun movimento nel periodo selezionato. Prova a cambiare mese/anno." : "Nessun movimento. Trascina un file dalla Cartella Estrazioni o aggiungilo manualmente."} />
+        ) : (
+          <div className="flex-1 overflow-auto -mx-1">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] text-neutral-400 uppercase tracking-wide">
+                  <th className="px-2 py-2 font-semibold">Data</th>
+                  <th className="px-2 py-2 font-semibold">Descrizione</th>
+                  <th className="px-2 py-2 font-semibold">Categoria</th>
+                  <th className="px-2 py-2 font-semibold text-right">Importo</th>
+                  <th className="px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(m => (
+                  <tr key={m.id} className="border-t border-neutral-100 hover:bg-neutral-50">
+                    <td className="px-2 py-2 text-neutral-500 text-xs whitespace-nowrap">{m.data}</td>
+                    <td className="px-2 py-2 text-neutral-800 max-w-[200px] truncate">{m.descrizione}</td>
+                    <td className="px-2 py-2"><Badge cat={m.categoria} /></td>
+                    <td className={"px-2 py-2 text-right font-semibold whitespace-nowrap " + (m.importo < 0 ? "text-neutral-800" : "text-emerald-600")}>{fmtEUR(m.importo)}</td>
+                    <td className="px-2 py-2 text-right">
+                      <button onClick={()=>removeMovement(m.id)} className="text-neutral-300 hover:text-rose-500 transition-colors"><Icons.X size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    ) },
+    { id:'categorie', title:'Voci di Spesa', icon: Icons.PieChart, accent:'text-amber-500', render: (
+      <div className="p-4 h-full">
+        {catBreakdown.length === 0 ? (
+          <EmptyState icon={Icons.PieChart} text="Nessuna voce di spesa nel periodo selezionato." />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2.5">
+            {catBreakdown.map(({ cat, total, count }) => (
+              <button key={cat} onClick={() => setFilterCat(cat)}
+                className="flex items-center gap-3 text-left group">
+                <span className="w-28 shrink-0"><Badge cat={cat} /></span>
+                <span className="flex-1 h-2 rounded-full bg-neutral-100 overflow-hidden">
+                  <span className={"block h-full rounded-full " + CATEGORY_META[cat].dot} style={{ width: `${Math.max(4, (total/maxCatTotal)*100)}%` }}></span>
+                </span>
+                <span className="text-xs font-semibold text-neutral-700 w-20 text-right shrink-0">{fmtEUR(total)}</span>
+                <span className="text-[10.5px] text-neutral-400 w-14 text-right shrink-0">{count} mov.</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    ) },
+    { id:'fido', title:'Monitoraggio Fido', icon: Icons.Landmark, accent:'text-amber-500', render: <FidoTrackerWidget /> },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Movimenti" subtitle="Banca, carta di credito e riconciliazione automatica" icon={Icons.ArrowLeftRight}
+        onReset={() => resetDashboard('movimenti')} resetLabel="Svuotare la tabella movimenti?" extra={<SaveProgressButton />} />
+      <GridCanvas dashKey="movimenti" widgets={widgets} />
+    </div>
+  );
+}
+
+/* ============================== INVESTIMENTI ============================== */
+
+const PORTAFOGLIO_HEADER_ALIASES = {
+  titolo: ['titolo'],
+  isin: ['isin'],
+  quantita: ['quantità', 'quantita'],
+  pma: ['p.zo medio di carico', 'pzo medio di carico', 'prezzo medio di carico'],
+  prezzoCorrente: ['p.zo di mercato', 'pzo di mercato', 'prezzo di mercato'],
+  valoreDiCarico: ['valore di carico'],
+  valoreDiMercato: ['valore di mercato €', 'valore di mercato'],
+};
+function detectPortafoglioHeaderRow(rows) {
+  const limit = Math.min(rows.length, 15);
+  for (let i = 0; i < limit; i++) {
+    const row = rows[i] || [];
+    const norm = row.map(normHeaderCell);
+    const idxOf = (aliases) => norm.findIndex(c => aliases.includes(c));
+    const isinIdx = idxOf(PORTAFOGLIO_HEADER_ALIASES.isin);
+    const pmaIdx = idxOf(PORTAFOGLIO_HEADER_ALIASES.pma);
+    if (isinIdx !== -1 && pmaIdx !== -1) {
+      return {
+        rowIndex: i,
+        titolo: idxOf(PORTAFOGLIO_HEADER_ALIASES.titolo),
+        isin: isinIdx,
+        quantita: idxOf(PORTAFOGLIO_HEADER_ALIASES.quantita),
+        pma: pmaIdx,
+        prezzoCorrente: idxOf(PORTAFOGLIO_HEADER_ALIASES.prezzoCorrente),
+        valoreDiCarico: idxOf(PORTAFOGLIO_HEADER_ALIASES.valoreDiCarico),
+        valoreDiMercato: idxOf(PORTAFOGLIO_HEADER_ALIASES.valoreDiMercato),
+      };
+    }
+  }
+  return null;
+}
+function parsePortafoglioRows(rows, map) {
+  const out = [];
+  const get = (row, idx) => (idx === -1 || idx === undefined) ? undefined : row[idx];
+  for (let i = map.rowIndex + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length === 0) continue;
+    const isinRaw = get(row, map.isin);
+    if (!isinLike(isinRaw)) continue;
+    const isin = String(isinRaw).trim().toUpperCase();
+    const pma = parseImporto(get(row, map.pma));
+    if (pma === null) continue;
+    const prezzoCorrente = parseImporto(get(row, map.prezzoCorrente)) ?? pma;
+    const nome = String(get(row, map.titolo) || isin).trim();
+    // Alcuni strumenti (es. obbligazioni/BTP) quotano il prezzo come % del nominale
+    // (es. 98,84 = 98,84% di 100), mentre "Quantità" riporta il nominale in EUR.
+    // Usiamo "Valore di carico" (già corretto in valuta) per derivare la quantità
+    // effettiva, cosi valore = quantita*pma torna sempre esatto qualunque sia la convenzione.
+    const valoreDiCarico = parseImporto(get(row, map.valoreDiCarico));
+    let quantita = parseImporto(get(row, map.quantita)) ?? 0;
+    if (valoreDiCarico !== null && pma > 0) {
+      quantita = valoreDiCarico / pma;
+    }
+    out.push({ id: uid(), isin, nome, pma, quantita, prezzoCorrente });
+  }
+  return out;
+}
+function parseRowsToTitoliGeneric(rows) {
+  const out = [];
+  for (const row of rows) {
+    const cells = (Array.isArray(row) ? row : Object.values(row)).filter(c => c !== null && c !== undefined && String(c).trim() !== '');
+    if (cells.length === 0) continue;
+    let isin = cells.find(c => isinLike(c));
+    if (!isin) continue;
+    isin = String(isin).trim().toUpperCase();
+    const numeric = cells.filter(c => c !== isin && parseImporto(c) !== null && !parseData(c)).map(c => parseImporto(c));
+    const nome = cells.filter(c => c !== isin && parseImporto(c) === null).map(c => String(c).trim()).sort((a,b)=>b.length-a.length)[0] || isin;
+    const pma = numeric[0] ?? 0;
+    const quantita = numeric[1] ?? 0;
+    const prezzoCorrente = numeric[2] ?? pma;
+    out.push({ id: uid(), isin, nome, pma, quantita, prezzoCorrente });
+  }
+  return out;
+}
+function parseRowsToTitoli(rows) {
+  const map = detectPortafoglioHeaderRow(rows);
+  if (map) {
+    const parsed = parsePortafoglioRows(rows, map);
+    if (parsed.length > 0) return parsed;
+  }
+  return parseRowsToTitoliGeneric(rows);
+}
+
+function LiveDot({ status }) {
+  const map = {
+    ok: { cls: 'bg-emerald-500', pulse: true, title: 'Quotazione live aggiornata dalla borsa' },
+    error: { cls: 'bg-amber-500', pulse: false, title: 'Ultimo aggiornamento live fallito — prezzo non recente' },
+    'no-ticker': { cls: 'bg-neutral-300', pulse: false, title: 'Nessuna quotazione live disponibile (prezzo manuale)' },
+    pending: { cls: 'bg-neutral-300', pulse: true, title: 'Verifica quotazione in corso...' },
+  };
+  const s = map[status] || map.pending;
+  return <span title={s.title} className={"inline-block w-1.5 h-1.5 rounded-full shrink-0 " + s.cls + (s.pulse ? " animate-pulse" : "")}></span>;
+}
+
+function TitoliTable({ titoli, onUpdate, onRemove }) {
+  const { marketData } = useApp();
+  const totaleValore = titoli.reduce((s,t) => s + t.quantita*t.prezzoCorrente, 0);
+  const totaleCosto = titoli.reduce((s,t) => s + t.quantita*t.pma, 0);
+  const plTot = totaleValore - totaleCosto;
+  const plPct = totaleCosto > 0 ? (plTot/totaleCosto)*100 : 0;
+  const liveCount = titoli.filter(t => marketData[t.isin]?.status === 'ok').length;
+
+  if (titoli.length === 0) return <EmptyState icon={Icons.LineChart} text="Nessun titolo. Trascina un file oppure aggiungi una posizione manualmente." />;
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-1 pb-3 mb-1 border-b border-neutral-100">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-500">Valore attuale</span>
+          <span className="text-base font-bold text-neutral-900">{fmtEUR(totaleValore)}</span>
+          {liveCount > 0 && <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 text-[10px] font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>{liveCount} LIVE</span>}
+        </div>
+        <span className={"inline-flex items-center gap-1 text-sm font-bold " + (plTot >= 0 ? "text-emerald-600" : "text-rose-600")}>
+          {plTot >= 0 ? <Icons.ArrowUpRight size={14}/> : <Icons.ArrowDownRight size={14}/>}
+          {fmtEUR(plTot)} ({fmtPct(plPct)})
+        </span>
+      </div>
+      <div className="overflow-auto flex-1 -mx-1">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[10.5px] text-neutral-400 uppercase tracking-wide">
+              <th className="px-2 py-2 font-semibold"></th>
+              <th className="px-2 py-2 font-semibold">ISIN</th>
+              <th className="px-2 py-2 font-semibold">Titolo</th>
+              <th className="px-2 py-2 font-semibold text-right">PMA</th>
+              <th className="px-2 py-2 font-semibold text-right">Qtà</th>
+              <th className="px-2 py-2 font-semibold text-right">Prezzo</th>
+              <th className="px-2 py-2 font-semibold text-right">Valore</th>
+              <th className="px-2 py-2 font-semibold text-right">G/P</th>
+              <th className="px-2 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {titoli.map(t => {
+              const valore = t.quantita*t.prezzoCorrente;
+              const costo = t.quantita*t.pma;
+              const pl = valore - costo;
+              const plp = costo > 0 ? (pl/costo)*100 : 0;
+              const md = marketData[t.isin];
+              return (
+                <tr key={t.id} className="border-t border-neutral-100 hover:bg-neutral-50">
+                  <td className="px-2 py-2"><LiveDot status={md?.status || 'pending'} /></td>
+                  <td className="px-2 py-2 text-neutral-400 text-[11px] font-mono whitespace-nowrap">
+                    {t.isin}
+                    {md?.ticker && <div className="text-[9.5px] text-neutral-300">{md.ticker}</div>}
+                  </td>
+                  <td className="px-2 py-2 text-neutral-800 max-w-[140px] truncate">{t.nome}{t.fonte && <span className="ml-1.5 text-[9.5px] text-neutral-400 font-medium">· {t.fonte}</span>}</td>
+                  <td className="px-2 py-2 text-right text-neutral-600 whitespace-nowrap">{fmtNum(t.pma)}</td>
+                  <td className="px-2 py-2 text-right text-neutral-600 whitespace-nowrap">
+                    {onUpdate ? <input type="number" value={t.quantita} onChange={(e)=>onUpdate(t.id,{quantita:e.target.value===''?'':Number(e.target.value)})} className="w-16 text-right bg-transparent border-b border-transparent hover:border-neutral-200 focus:border-neutral-400 outline-none" /> : fmtNum(t.quantita,0)}
+                  </td>
+                  <td className="px-2 py-2 text-right text-neutral-600 whitespace-nowrap">{fmtNum(t.prezzoCorrente)}</td>
+                  <td className="px-2 py-2 text-right font-semibold text-neutral-800 whitespace-nowrap">{fmtEUR(valore)}</td>
+                  <td className={"px-2 py-2 text-right font-semibold whitespace-nowrap " + (pl >= 0 ? "text-emerald-600" : "text-rose-600")}>
+                    {fmtEUR(pl)}
+                    <div className="text-[10px] font-medium opacity-80">{fmtPct(plp)}</div>
+                  </td>
+                  <td className="px-2 py-2 text-right">
+                    {onRemove && <button onClick={()=>onRemove(t.id)} className="text-neutral-300 hover:text-rose-500 transition-colors"><Icons.X size={13} /></button>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ManualTitoloForm({ onAdd, compact }) {
+  const [f, setF] = useState({ isin:'', nome:'', pma:'', quantita:'', prezzoCorrente:'' });
+  const submit = () => {
+    if (!f.isin || !f.nome || f.pma==='' || f.quantita==='') return;
+    onAdd({ id: uid(), isin: f.isin.toUpperCase(), nome: f.nome, pma: Number(f.pma), quantita: Number(f.quantita), prezzoCorrente: f.prezzoCorrente === '' ? Number(f.pma) : Number(f.prezzoCorrente) });
+    setF({ isin:'', nome:'', pma:'', quantita:'', prezzoCorrente:'' });
+  };
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <TextInput placeholder="ISIN" value={f.isin} onChange={(e)=>setF(s=>({...s,isin:e.target.value}))} />
+      <TextInput placeholder="Nome titolo" value={f.nome} onChange={(e)=>setF(s=>({...s,nome:e.target.value}))} />
+      <TextInput type="number" step="0.01" placeholder="PMA €" value={f.pma} onChange={(e)=>setF(s=>({...s,pma:e.target.value}))} />
+      <TextInput type="number" step="1" placeholder="Quantità" value={f.quantita} onChange={(e)=>setF(s=>({...s,quantita:e.target.value}))} />
+      <TextInput type="number" step="0.01" placeholder="Prezzo corrente (opz.)" value={f.prezzoCorrente} onChange={(e)=>setF(s=>({...s,prezzoCorrente:e.target.value}))} className="col-span-2" />
+      <PrimaryBtn onClick={submit} icon={Icons.Plus} className="col-span-2">Aggiungi titolo</PrimaryBtn>
+    </div>
+  );
+}
+
+const SUB_PORTFOLIOS = [
+  { key:'giulia', label:'Giulia', icon:'User' },
+  { key:'cristiano', label:'Cristiano', icon:'User' },
+  { key:'alessandro', label:'Alessandro', icon:'User' },
+  { key:'mamma', label:'Mamma', icon:'Users' },
+];
+
+function InvestimentiDashboard() {
+  const { investments, setInvestments, resetDashboard, pushToast, marketData, refreshMarketData, isRefreshingPrices } = useApp();
+  const [subTab, setSubTab] = useState('giulia');
+  const [showManual, setShowManual] = useState(false);
+
+  const lastUpdate = useMemo(() => {
+    const times = Object.values(marketData).map(m => m.updatedAt).filter(Boolean);
+    return times.length ? new Date(Math.max(...times)) : null;
+  }, [marketData]);
+
+  const addMassimiliano = (t, fonte) => setInvestments(prev => ({ ...prev, massimiliano: [{ ...t, fonte }, ...prev.massimiliano] }));
+  const removeMassimiliano = (id) => setInvestments(prev => ({ ...prev, massimiliano: prev.massimiliano.filter(t => t.id !== id) }));
+  const updateMassimiliano = (id, patch) => setInvestments(prev => ({ ...prev, massimiliano: prev.massimiliano.map(t => t.id === id ? { ...t, ...patch } : t) }));
+
+  const onFilesRows = (rows, filename, error, fonte) => {
+    if (error) { pushToast('Non riesco a leggere ' + filename + '.', 'error'); return; }
+    const parsed = parseRowsToTitoli(rows);
+    if (parsed.length === 0) { pushToast('Nessun titolo riconosciuto in ' + filename + '.', 'warn'); return; }
+    setInvestments(prev => ({ ...prev, massimiliano: [...parsed.map(t => ({ ...t, fonte })), ...prev.massimiliano] }));
+    pushToast(`${parsed.length} titoli importati da ${filename}`);
+  };
+  const onMockFile = (fileId, expectedKind) => {
+    const meta = ESTRAZIONI_FILES.find(f => f.id === fileId);
+    if (!meta || meta.kind !== expectedKind) { pushToast('Trascina il file corretto in questa dropzone.', 'warn'); return; }
+    const data = meta.kind === 'fineco' ? MOCK_FINECO_TITOLI : MOCK_LOMBARD_TITOLI;
+    const parsed = data.map(t => ({ ...t, id: uid(), fonte: meta.kind === 'fineco' ? 'Fineco' : 'Lombard' }));
+    setInvestments(prev => ({ ...prev, massimiliano: [...parsed, ...prev.massimiliano] }));
+    pushToast(`${parsed.length} titoli caricati da ${meta.name}`);
+  };
+
+  const addSub = (key, t) => setInvestments(prev => ({ ...prev, [key]: [t, ...prev[key]] }));
+  const removeSub = (key, id) => setInvestments(prev => ({ ...prev, [key]: prev[key].filter(t => t.id !== id) }));
+  const updateSub = (key, id, patch) => setInvestments(prev => ({ ...prev, [key]: prev[key].map(t => t.id === id ? { ...t, ...patch } : t) }));
+
+  const widgets = [
+    { id:'carica_massimiliano', title:'Carica Titoli Massimiliano', icon: Icons.Upload, accent:'text-violet-500', render: (
+      <div className="p-4 flex flex-col gap-3">
+        <Dropzone icon={Icons.FileSpreadsheet} label="Carica File Fineco" sub="CSV / XLSX o trascina dalla Cartella"
+          onFilesRows={(rows,name,err)=>onFilesRows(rows,name,err,'Fineco')} onMockFile={(id)=>onMockFile(id,'fineco')} />
+        <Dropzone icon={Icons.FileSpreadsheet} label="Carica File Lombard" sub="CSV / XLSX o trascina dalla Cartella"
+          onFilesRows={(rows,name,err)=>onFilesRows(rows,name,err,'Lombard')} onMockFile={(id)=>onMockFile(id,'lombard')} />
+        <div className="pt-2 border-t border-neutral-100">
+          <GhostBtn icon={Icons.Edit3} onClick={()=>setShowManual(v=>!v)} className="w-full justify-center">{showManual ? 'Chiudi' : 'Inserimento manuale'}</GhostBtn>
+          {showManual && <div className="mt-3"><ManualTitoloForm onAdd={(t)=>{ addMassimiliano(t,'Manuale'); pushToast('Titolo aggiunto'); }} /></div>}
+        </div>
+      </div>
+    ) },
+    { id:'portafoglio_massimiliano', title:'Portafoglio Massimiliano', icon: Icons.TrendingUp, accent:'text-violet-500', render: (
+      <div className="p-4 h-full">
+        <TitoliTable titoli={investments.massimiliano} onUpdate={updateMassimiliano} onRemove={removeMassimiliano} />
+      </div>
+    ) },
+    { id:'sottoportafogli', title:'Sotto-Portafogli Familiari', icon: Icons.Users, accent:'text-sky-500', render: (
+      <div className="p-4 h-full flex flex-col">
+        <div className="flex gap-1.5 mb-3 flex-wrap">
+          {SUB_PORTFOLIOS.map(p => (
+            <GhostBtn key={p.key} active={subTab===p.key} onClick={()=>setSubTab(p.key)} icon={Icons[p.icon]}>{p.label} ({investments[p.key].length})</GhostBtn>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4 flex-1 min-h-0">
+          <div className="min-h-0">
+            <TitoliTable titoli={investments[subTab]} onUpdate={(id,p)=>updateSub(subTab,id,p)} onRemove={(id)=>removeSub(subTab,id)} />
+          </div>
+          <div className="border-l border-neutral-100 pl-4">
+            <FieldLabel>Aggiungi a {SUB_PORTFOLIOS.find(p=>p.key===subTab).label}</FieldLabel>
+            <ManualTitoloForm onAdd={(t)=>{ addSub(subTab,t); pushToast('Titolo aggiunto a ' + SUB_PORTFOLIOS.find(p=>p.key===subTab).label); }} />
+            <p className="text-[10.5px] text-neutral-400 mt-3 leading-relaxed">Questi titoli sono un "di cui" e non vengono sommati al totale di Massimiliano.</p>
+          </div>
+        </div>
+      </div>
+    ) },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Investimenti" subtitle="Borsa e patrimonio familiare, con quotazioni live dalla borsa" icon={Icons.TrendingUp}
+        onReset={() => resetDashboard('investimenti')} resetLabel="Azzerare tutti i titoli?"
+        extra={
+          <>
+            <SaveProgressButton />
+            <button onClick={refreshMarketData} disabled={isRefreshingPrices}
+              title={lastUpdate ? `Ultimo aggiornamento: ${lastUpdate.toLocaleTimeString('it-IT')}` : 'Non ancora aggiornato'}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-neutral-200 bg-white text-neutral-500 hover:text-neutral-900 hover:border-neutral-300 text-sm font-medium transition-colors disabled:opacity-50">
+              <Icons.RefreshCw size={14} className={isRefreshingPrices ? 'animate-spin' : ''} />
+              {isRefreshingPrices ? 'Aggiornamento...' : (lastUpdate ? `Aggiornato ${lastUpdate.toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'})}` : 'Aggiorna quotazioni')}
+            </button>
+          </>
+        } />
+      <GridCanvas dashKey="investimenti" widgets={widgets} />
+    </div>
+  );
+}
+
+/* ============================== SECONDA PENSIONE ============================== */
+
+function PensioneDashboard() {
+  const { pensione, setPensione, resetDashboard } = useApp();
+
+  const set = (k,v) => setPensione(prev => ({ ...prev, [k]: v }));
+
+  const proiezione = useMemo(() => buildProiezionePensione(Number(pensione.importoMensile)||0, Number(pensione.anniInvestimento)||0), [pensione.importoMensile, pensione.anniInvestimento]);
+  const capitaleFinale = proiezione.length ? proiezione[proiezione.length-1].capitale : 0;
+  const versatoFinale = proiezione.length ? proiezione[proiezione.length-1].versato : 0;
+  const rendimento = capitaleFinale - versatoFinale;
+
+  const deduzioneAnnua = Math.min((Number(pensione.importoMensile)||0) * 12, 5164.57);
+  const risparmioAnnuo = calcolaIRPEF(Number(pensione.ral)||0) - calcolaIRPEF((Number(pensione.ral)||0) - deduzioneAnnua);
+  const anni = Number(pensione.anniInvestimento) || 0;
+  const risparmioCumulativo = risparmioAnnuo * anni;
+
+  const widgets = [
+    { id:'input', title:'Parametri Piano', icon: Icons.Settings2, accent:'text-amber-500', render: (
+      <div className="p-5 flex flex-col gap-4">
+        <div>
+          <FieldLabel>Data Inizio</FieldLabel>
+          <TextInput type="date" value={pensione.dataInizio} onChange={(e)=>set('dataInizio', e.target.value)} />
+        </div>
+        <div>
+          <FieldLabel>Importo Mensile (€)</FieldLabel>
+          <TextInput type="number" step="10" value={pensione.importoMensile} onChange={(e)=>set('importoMensile', e.target.value === '' ? '' : Number(e.target.value))} />
+        </div>
+        <div>
+          <FieldLabel>Anni di Investimento</FieldLabel>
+          <TextInput type="number" step="1" value={pensione.anniInvestimento} onChange={(e)=>set('anniInvestimento', e.target.value === '' ? '' : Number(e.target.value))} />
+        </div>
+        <div>
+          <FieldLabel>RAL Utente (€)</FieldLabel>
+          <TextInput type="number" step="500" value={pensione.ral} onChange={(e)=>set('ral', e.target.value === '' ? '' : Number(e.target.value))} />
+        </div>
+        <div className="mt-1 pt-3 border-t border-neutral-100 flex items-center justify-between">
+          <span className="text-xs text-neutral-500">Crescita ipotizzata</span>
+          <span className="text-sm font-bold text-neutral-800">4% composto annuo</span>
+        </div>
+      </div>
+    ) },
+    { id:'proiezione', title:'Proiezione Capitale', icon: Icons.LineChart, accent:'text-indigo-500', render: (
+      <div className="p-4 h-full flex flex-col">
+        <div className="flex items-center gap-6 mb-2 px-1 flex-wrap">
+          <div><p className="text-[11px] text-neutral-400">Capitale finale</p><p className="text-lg font-bold text-neutral-900">{fmtEUR(capitaleFinale)}</p></div>
+          <div><p className="text-[11px] text-neutral-400">Versato</p><p className="text-lg font-bold text-neutral-500">{fmtEUR(versatoFinale)}</p></div>
+          <div><p className="text-[11px] text-neutral-400">Rendimento</p><p className="text-lg font-bold text-emerald-600">{fmtEUR(rendimento)}</p></div>
+        </div>
+        <div className="flex-1 min-h-0">
+          {proiezione.length > 1 ? <LineChartSVG points={proiezione} color="#4f46e5" valueKey="capitale" /> : <EmptyState icon={Icons.LineChart} text="Imposta importo mensile e anni per generare la proiezione." />}
+        </div>
+      </div>
+    ) },
+    { id:'risparmio', title:'Risparmio Fiscale IRPEF', icon: Icons.Percent, accent:'text-emerald-500', render: (
+      <div className="p-5 h-full">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <div className="bg-neutral-50 rounded-xl p-4">
+            <p className="text-[11px] text-neutral-400 mb-1">Deducibilità annua</p>
+            <p className="text-lg font-bold text-neutral-900">{fmtEUR(deduzioneAnnua)}</p>
+            <p className="text-[10.5px] text-neutral-400 mt-1">Tetto massimo {fmtEUR(5164.57)}</p>
+          </div>
+          <div className="bg-emerald-50 rounded-xl p-4">
+            <p className="text-[11px] text-emerald-600 mb-1">Risparmio fiscale annuo</p>
+            <p className="text-lg font-bold text-emerald-700">{fmtEUR(risparmioAnnuo)}</p>
+            <p className="text-[10.5px] text-emerald-500 mt-1">Su RAL di {fmtEUR(Number(pensione.ral)||0)}</p>
+          </div>
+          <div className="bg-neutral-900 rounded-xl p-4">
+            <p className="text-[11px] text-neutral-400 mb-1">Risparmio cumulativo</p>
+            <p className="text-lg font-bold text-white">{fmtEUR(risparmioCumulativo)}</p>
+            <p className="text-[10.5px] text-neutral-400 mt-1">In {anni} anni di piano</p>
+          </div>
+        </div>
+        <div className="text-[11px] text-neutral-400 leading-relaxed px-1">
+          Calcolo basato sugli scaglioni IRPEF 2024: 23% fino a 28.000€, 35% da 28.000€ a 50.000€, 43% oltre 50.000€. Il risparmio è la differenza tra l'imposta dovuta sulla RAL piena e quella dovuta sulla RAL ridotta dell'importo deducibile (max {fmtEUR(5164.57)}/anno).
+        </div>
+      </div>
+    ) },
+  ];
+
+  return (
+    <div>
+      <DashboardHeader title="Seconda Pensione" subtitle="Proiezione del fondo e ottimizzazione fiscale IRPEF" icon={Icons.ShieldCheck}
+        onReset={() => resetDashboard('pensione')} resetLabel="Azzerare i campi del piano?" extra={<SaveProgressButton />} />
+      <GridCanvas dashKey="pensione" widgets={widgets} />
+    </div>
+  );
+}
+
+/* ============================== LIVE MARKET DATA ============================== */
+
+const CORS_PROXIES = [
+  (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u),
+];
+
+async function fetchViaProxy(targetUrl, timeoutMs = 8000) {
+  let lastErr = new Error('Nessun proxy CORS disponibile');
+  for (const buildUrl of CORS_PROXIES) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(buildUrl(targetUrl), { signal: ctrl.signal });
+      if (!r.ok) { lastErr = new Error('HTTP ' + r.status); continue; }
+      const j = await r.json();
+      return j;
+    } catch (e) {
+      lastErr = e;
+      continue;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  throw lastErr;
+}
+async function resolveTickerForISIN(isin) {
+  const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(isin)}&quotesCount=1&newsCount=0`;
+  const j = await fetchViaProxy(url);
+  const q = j?.quotes?.[0];
+  return q?.symbol || null;
+}
+async function fetchYahooPrice(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}`;
+  const j = await fetchViaProxy(url);
+  const price = j?.chart?.result?.[0]?.meta?.regularMarketPrice;
+  if (typeof price !== 'number') throw new Error('Nessun prezzo');
+  return price;
+}
+async function fetchMarketPriceForISIN(isin, cachedTicker) {
+  const ticker = cachedTicker || await resolveTickerForISIN(isin);
+  if (!ticker) return { isin, ticker: null, status: 'no-ticker' };
+  const price = await fetchYahooPrice(ticker);
+  return { isin, ticker, status: 'ok', price };
+}
+
+/* ============================== PERSISTENZA (localStorage) ============================== */
+
+const STORAGE_KEY = 'gflc_progressi_v1';
+function loadPersisted() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return (data && typeof data === 'object') ? data : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* ============================== GOOGLE DRIVE ============================== */
+
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_CLIENT_ID_KEY = 'gflc_drive_client_id';
+const DRIVE_FILE_INFO_KEY = 'gflc_drive_file_info';
+const DRIVE_FOLDER_NAME = 'Gestione dei Flussi di Casa';
+const DRIVE_FILE_NAME = 'dati-gestione-flussi-casa.json';
+
+function getSavedDriveClientId() { return localStorage.getItem(DRIVE_CLIENT_ID_KEY) || ''; }
+function saveDriveClientId(id) { localStorage.setItem(DRIVE_CLIENT_ID_KEY, id.trim()); }
+function clearDriveClientId() { localStorage.removeItem(DRIVE_CLIENT_ID_KEY); }
+function getSavedDriveFileInfo() {
+  try { return JSON.parse(localStorage.getItem(DRIVE_FILE_INFO_KEY)); } catch (e) { return null; }
+}
+function saveDriveFileInfo(info) { localStorage.setItem(DRIVE_FILE_INFO_KEY, JSON.stringify(info)); }
+function clearDriveFileInfo() { localStorage.removeItem(DRIVE_FILE_INFO_KEY); }
+
+function waitForGsi(maxWaitMs) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      if (typeof google !== 'undefined' && google.accounts && google.accounts.oauth2) { resolve(true); return; }
+      if (Date.now() - start > maxWaitMs) { resolve(false); return; }
+      setTimeout(check, 150);
+    };
+    check();
+  });
+}
+
+let gsiTokenClient = null;
+function ensureGsiTokenClient(clientId, onToken) {
+  if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) return null;
+  if (!gsiTokenClient) {
+    gsiTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: DRIVE_SCOPE,
+      callback: () => {},
+    });
+  }
+  return gsiTokenClient;
+}
+function requestDriveToken(clientId, interactive) {
+  return new Promise((resolve) => {
+    const client = ensureGsiTokenClient(clientId);
+    if (!client) { resolve(null); return; }
+    client.callback = (resp) => {
+      if (resp && resp.error) { resolve(null); return; }
+      resolve(resp.access_token);
+    };
+    try {
+      client.requestAccessToken({ prompt: interactive ? 'consent' : '' });
+    } catch (e) {
+      resolve(null);
+    }
+  });
+}
+
+async function driveApi(token, path, options) {
+  const res = await fetch('https://www.googleapis.com/drive/v3/' + path, {
+    ...options,
+    headers: { Authorization: 'Bearer ' + token, ...(options && options.headers) },
+  });
+  if (!res.ok) throw new Error('Drive API ' + res.status);
+  return res.json();
+}
+
+async function driveFindOrCreateFolder(token) {
+  const q = encodeURIComponent(`name='${DRIVE_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const found = await driveApi(token, `files?q=${q}&fields=files(id,name)&spaces=drive`);
+  if (found.files && found.files.length > 0) return found.files[0].id;
+  const created = await driveApi(token, 'files?fields=id', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: DRIVE_FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' }),
+  });
+  return created.id;
+}
+
+async function driveFindOrCreateFile(token, folderId, initialContent) {
+  const q = encodeURIComponent(`'${folderId}' in parents and name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const found = await driveApi(token, `files?q=${q}&fields=files(id,name)&spaces=drive`);
+  if (found.files && found.files.length > 0) return found.files[0].id;
+
+  const boundary = 'gflc-boundary-' + uid();
+  const metadata = { name: DRIVE_FILE_NAME, parents: [folderId], mimeType: 'application/json' };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${initialContent}\r\n--${boundary}--`;
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  if (!res.ok) throw new Error('Drive upload ' + res.status);
+  const created = await res.json();
+  return created.id;
+}
+
+async function driveDownloadFile(token, fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (!res.ok) throw new Error('Drive download ' + res.status);
+  return res.json();
+}
+
+async function driveUploadContent(token, fileId, content) {
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+    body: content,
+  });
+  if (!res.ok) throw new Error('Drive save ' + res.status);
+  return res.json();
+}
+
+/* ============================== APP ============================== */
+
+function App() {
+  const [persisted] = useState(loadPersisted);
+  const [view, setView] = useState('riepilogo');
+  const [period, setPeriod] = useState(() => persisted?.period ?? { mese: null, anno: 2026 });
+  const [incomes, setIncomes] = useState(() => persisted?.incomes ?? DEFAULT_INCOMES);
+  const [extraEntrate, setExtraEntrate] = useState(() => persisted?.extraEntrate ?? []);
+  const [movements, setMovements] = useState(() => persisted?.movements ?? defaultMovements());
+  const [investments, setInvestments] = useState(() => persisted?.investments ?? defaultInvestments());
+  const [pensione, setPensione] = useState(() => persisted?.pensione ?? defaultPensione());
+  const [fido, setFido] = useState(() => persisted?.fido ?? defaultFido());
+  const [hiddenFiles, setHiddenFiles] = useState(() => persisted?.hiddenFiles ?? []);
+  const [estrazioniBackups, setEstrazioniBackups] = useState(() => persisted?.estrazioniBackups ?? []);
+  const [finanziamenti, setFinanziamenti] = useState(() => persisted?.finanziamenti ?? defaultFinanziamenti());
+  const [agenda, setAgenda] = useState(() => persisted?.agenda ?? defaultAgenda());
+  const [layouts, setLayouts] = useState(() => persisted?.layouts ?? buildDefaultLayouts(getAvailWidth()));
+  const [lastSaved, setLastSaved] = useState(() => persisted?.savedAt ? new Date(persisted.savedAt) : null);
+  const [toasts, setToasts] = useState([]);
+  const [marketData, setMarketData] = useState({});
+  const [isRefreshingPrices, setIsRefreshingPrices] = useState(false);
+  const marketDataRef = useRef(marketData);
+  marketDataRef.current = marketData;
+  const investmentsRef = useRef(investments);
+  investmentsRef.current = investments;
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [driveClientId, setDriveClientIdState] = useState(getSavedDriveClientId);
+  const [driveFileInfo, setDriveFileInfoState] = useState(getSavedDriveFileInfo);
+  const [driveConnected, setDriveConnected] = useState(false);
+  const [driveStatus, setDriveStatus] = useState('idle');
+  const [gsiReady, setGsiReady] = useState(false);
+  const driveTokenRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    waitForGsi(15000).then((ok) => { if (!cancelled) setGsiReady(ok); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    try {
+      const manifest = {
+        name: 'Gestione dei Flussi di Casa',
+        short_name: 'Flussi Casa',
+        description: 'Gestione finanziaria familiare: entrate, movimenti, investimenti, mutui, fido e agenda spese.',
+        start_url: '.',
+        display: 'standalone',
+        background_color: '#fafafa',
+        theme_color: '#18181b',
+        icons: [
+          { src: PWA_ICON_SVG, sizes: '192x192', type: 'image/svg+xml', purpose: 'any' },
+          { src: PWA_ICON_SVG, sizes: '512x512', type: 'image/svg+xml', purpose: 'any' },
+          { src: PWA_ICON_SVG, sizes: '512x512', type: 'image/svg+xml', purpose: 'maskable' },
+        ],
+      };
+      const blob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+      const url = URL.createObjectURL(blob);
+      let link = document.querySelector('link[rel="manifest"]');
+      if (!link) { link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); }
+      link.href = url;
+      let favicon = document.querySelector('link[rel="icon"]');
+      if (!favicon) { favicon = document.createElement('link'); favicon.rel = 'icon'; document.head.appendChild(favicon); }
+      favicon.href = PWA_ICON_SVG;
+    } catch (e) {}
+  }, []);
+
+  const pushToast = useCallback((message, type='ok', action) => {
+    const id = uid();
+    setToasts(prev => [...prev, { id, message, type, action }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), action ? 6500 : 3500);
+  }, []);
+
+  const buildPayload = useCallback(() => ({
+    period, incomes, extraEntrate, movements, investments, pensione, fido, hiddenFiles, estrazioniBackups, finanziamenti, agenda, layouts, savedAt: Date.now(),
+  }), [period, incomes, extraEntrate, movements, investments, pensione, fido, hiddenFiles, estrazioniBackups, finanziamenti, agenda, layouts]);
+
+  const applyPersistedPayload = useCallback((data) => {
+    if (!data || typeof data !== 'object') return;
+    if (data.period) setPeriod(data.period);
+    if (data.incomes) setIncomes(data.incomes);
+    if (data.extraEntrate) setExtraEntrate(data.extraEntrate);
+    if (data.movements) setMovements(data.movements);
+    if (data.investments) setInvestments(data.investments);
+    if (data.pensione) setPensione(data.pensione);
+    if (data.fido) setFido(data.fido);
+    if (data.hiddenFiles) setHiddenFiles(data.hiddenFiles);
+    if (data.estrazioniBackups) setEstrazioniBackups(data.estrazioniBackups);
+    if (data.finanziamenti) setFinanziamenti(data.finanziamenti);
+    if (data.agenda) setAgenda(data.agenda);
+    if (data.layouts) setLayouts(data.layouts);
+    if (data.savedAt) setLastSaved(new Date(data.savedAt));
+  }, []);
+
+  const setDriveClientId = useCallback((id) => {
+    saveDriveClientId(id);
+    setDriveClientIdState(id.trim());
+    setDriveConnected(false);
+    driveTokenRef.current = null;
+  }, []);
+  const forgetDriveFolder = useCallback(() => {
+    clearDriveFileInfo();
+    setDriveFileInfoState(null);
+    setDriveConnected(false);
+    driveTokenRef.current = null;
+  }, []);
+
+  const connectDrive = useCallback(async () => {
+    const clientId = driveClientId.trim();
+    if (!clientId) { pushToast('Incolla prima il Client ID di Google nelle impostazioni.', 'warn'); return; }
+    setDriveStatus('connecting');
+    const ready = await waitForGsi(12000);
+    if (!ready) { setDriveStatus('error'); pushToast('Libreria Google non disponibile (serve una connessione internet e una pagina servita via web, non un file locale).', 'error'); return; }
+    const token = await requestDriveToken(clientId, true);
+    if (!token) { setDriveStatus('error'); pushToast('Connessione a Google Drive annullata o non riuscita.', 'error'); return; }
+    driveTokenRef.current = token;
+    try {
+      let info = getSavedDriveFileInfo();
+      if (!info || !info.folderId || !info.fileId) {
+        const folderId = await driveFindOrCreateFolder(token);
+        const fileId = await driveFindOrCreateFile(token, folderId, JSON.stringify(buildPayload()));
+        info = { folderId, fileId };
+        saveDriveFileInfo(info);
+        setDriveFileInfoState(info);
+        setDriveConnected(true);
+        setDriveStatus('idle');
+        pushToast(`Cartella "${DRIVE_FOLDER_NAME}" creata su Google Drive`);
+        return;
+      }
+      setDriveConnected(true);
+      setDriveStatus('idle');
+      try {
+        const remote = await driveDownloadFile(token, info.fileId);
+        applyPersistedPayload(remote);
+        pushToast('Google Drive collegato: dati caricati dal cloud');
+      } catch (e) {
+        pushToast('Google Drive collegato');
+      }
+    } catch (e) {
+      setDriveStatus('error');
+      pushToast('Errore nella configurazione della cartella su Google Drive.', 'error');
+    }
+  }, [driveClientId, buildPayload, applyPersistedPayload, pushToast]);
+
+  const disconnectDrive = useCallback(() => {
+    setDriveConnected(false);
+    driveTokenRef.current = null;
+    pushToast('Google Drive scollegato per questa sessione');
+  }, [pushToast]);
+
+  useEffect(() => {
+    if (!driveClientId || !driveFileInfo) return;
+    let cancelled = false;
+    (async () => {
+      const ready = await waitForGsi(12000);
+      if (cancelled || !ready) return;
+      const token = await requestDriveToken(driveClientId, false);
+      if (cancelled || !token) return;
+      driveTokenRef.current = token;
+      setDriveConnected(true);
+      setDriveStatus('syncing');
+      try {
+        const remote = await driveDownloadFile(token, driveFileInfo.fileId);
+        if (!cancelled) applyPersistedPayload(remote);
+      } catch (e) {}
+      if (!cancelled) setDriveStatus('idle');
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const saveProgress = useCallback(async () => {
+    const payload = buildPayload();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      setLastSaved(new Date());
+    } catch (e) {
+      pushToast('Impossibile salvare: memoria del browser piena o non disponibile.', 'error');
+      return;
+    }
+    if (!driveConnected || !driveFileInfo) {
+      pushToast('Progressi salvati sul browser');
+      return;
+    }
+    setDriveStatus('syncing');
+    try {
+      let token = driveTokenRef.current;
+      if (!token) token = await requestDriveToken(driveClientId, false);
+      if (!token) { setDriveStatus('error'); pushToast('Salvato sul browser. Riconnetti Google Drive per sincronizzare nel cloud.', 'warn'); return; }
+      driveTokenRef.current = token;
+      await driveUploadContent(token, driveFileInfo.fileId, JSON.stringify(payload));
+      setDriveStatus('idle');
+      pushToast('Progressi salvati su Google Drive');
+    } catch (e) {
+      setDriveStatus('error');
+      pushToast('Salvato sul browser, ma la sincronizzazione con Google Drive è fallita.', 'warn');
+    }
+  }, [buildPayload, driveConnected, driveFileInfo, driveClientId, pushToast]);
+
+  const refreshMarketData = useCallback(async () => {
+    setIsRefreshingPrices(true);
+    const inv = investmentsRef.current;
+    const isins = new Set();
+    ['massimiliano', 'giulia', 'cristiano', 'alessandro', 'mamma'].forEach(k => {
+      (inv[k] || []).forEach(t => { if (t.isin) isins.add(t.isin); });
+    });
+    const cached = marketDataRef.current;
+    const results = await Promise.allSettled(
+      Array.from(isins).map(isin => fetchMarketPriceForISIN(isin, cached[isin]?.ticker))
+    );
+    const patch = {};
+    results.forEach((r, i) => {
+      const isin = Array.from(isins)[i];
+      if (r.status === 'fulfilled') {
+        patch[isin] = { ...r.value, updatedAt: Date.now() };
+      } else {
+        const prev = cached[isin];
+        patch[isin] = { isin, ticker: prev?.ticker || null, status: 'error', price: prev?.price, updatedAt: prev?.updatedAt || null };
+      }
+    });
+    setMarketData(prev => ({ ...prev, ...patch }));
+    setInvestments(prev => {
+      const applyPrice = (t) => (patch[t.isin] && patch[t.isin].status === 'ok') ? { ...t, prezzoCorrente: patch[t.isin].price } : t;
+      return {
+        massimiliano: prev.massimiliano.map(applyPrice),
+        giulia: prev.giulia.map(applyPrice),
+        cristiano: prev.cristiano.map(applyPrice),
+        alessandro: prev.alessandro.map(applyPrice),
+        mamma: prev.mamma.map(applyPrice),
+      };
+    });
+    setIsRefreshingPrices(false);
+  }, []);
+
+  useEffect(() => {
+    refreshMarketData();
+    const interval = setInterval(refreshMarketData, 60000);
+    return () => clearInterval(interval);
+  }, [refreshMarketData]);
+
+  const resetDashboard = useCallback((key) => {
+    if (key === 'riepilogo') {
+      setLayouts(prev => ({ ...prev, riepilogo: buildDefaultLayouts(getAvailWidth()).riepilogo }));
+      setPeriod({ mese: null, anno: 2026 });
+      pushToast('Riepilogo ripristinato');
+    } else if (key === 'entrate') {
+      setIncomes(DEFAULT_INCOMES);
+      setExtraEntrate([]);
+      pushToast('Entrate ripristinate ai valori di base');
+    } else if (key === 'movimenti') {
+      if (movements.length > 0) {
+        const backup = makeMovimentiBackup(movements);
+        setEstrazioniBackups(prev => [backup, ...prev].slice(0, 10));
+      }
+      setMovements([]);
+      setFido(defaultFido());
+      pushToast(movements.length > 0 ? 'Movimenti salvati in Cartella Estrazioni prima dello svuotamento' : 'Tabella movimenti e fido svuotati');
+    } else if (key === 'investimenti') {
+      setInvestments({ massimiliano: [], giulia: [], cristiano: [], alessandro: [], mamma: [] });
+      pushToast('Tutti i titoli sono stati azzerati');
+    } else if (key === 'pensione') {
+      setPensione({ dataInizio: '', importoMensile: 0, anniInvestimento: 0, ral: 0 });
+      pushToast('Campi pensione azzerati');
+    } else if (key === 'finanziamenti') {
+      setFinanziamenti(defaultFinanziamenti());
+      pushToast('Elenco finanziamenti e mutui ripristinato ai valori di base');
+    } else if (key === 'agenda') {
+      setAgenda([]);
+      pushToast('Agenda spese svuotata');
+    }
+  }, [pushToast, movements]);
+
+  const ctx = { period, setPeriod, incomes, setIncomes, extraEntrate, setExtraEntrate, movements, setMovements, investments, setInvestments, pensione, setPensione, fido, setFido, hiddenFiles, setHiddenFiles, estrazioniBackups, setEstrazioniBackups, finanziamenti, setFinanziamenti, agenda, setAgenda, layouts, setLayouts, toasts, setToasts, pushToast, resetDashboard, marketData, refreshMarketData, isRefreshingPrices, saveProgress, lastSaved, driveClientId, setDriveClientId, driveFileInfo, driveConnected, driveStatus, gsiReady, connectDrive, disconnectDrive, forgetDriveFolder };
+
+  let Dashboard;
+  if (view === 'riepilogo') Dashboard = RiepilogoDashboard;
+  else if (view === 'entrate') Dashboard = EntrateDashboard;
+  else if (view === 'agenda') Dashboard = AgendaDashboard;
+  else if (view === 'finanziamenti') Dashboard = FinanziamentiDashboard;
+  else if (view === 'movimenti') Dashboard = MovimentiDashboard;
+  else if (view === 'investimenti') Dashboard = InvestimentiDashboard;
+  else Dashboard = PensioneDashboard;
+
+  return (
+    <AppCtx.Provider value={ctx}>
+      <div className={"flex min-h-screen bg-neutral-50 " + (isMobile ? "flex-col" : "")}>
+        {isMobile && (
+          <div className="sticky top-0 z-30 h-14 bg-white border-b border-neutral-200 flex items-center px-4 gap-3 shrink-0">
+            <button onClick={() => setMobileNavOpen(true)} className="text-neutral-600 hover:text-neutral-900">
+              <Icons.Menu size={20} />
+            </button>
+            <span className="text-sm font-bold text-neutral-900 truncate">{NAV_ITEMS.find(n=>n.key===view)?.label || 'Gestione dei Flussi di Casa'}</span>
+          </div>
+        )}
+        <Sidebar view={view} setView={setView} isMobile={isMobile} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+        <main className={"flex-1 min-w-0 overflow-x-auto " + (isMobile ? "px-3 py-4" : "px-6 py-6")}>
+          <Dashboard />
+        </main>
+      </div>
+      <ToastStack />
+    </AppCtx.Provider>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
